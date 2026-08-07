@@ -1,0 +1,14 @@
+{
+    "name": "phpaml/framework",
+    "description": "PHPAML MVC framework core",
+    "type": "library",
+    "require": {
+        "php": ">=8.2",
+        "ext-pdo": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "PHPAML\\": "src/"
+        }
+    }
+}
