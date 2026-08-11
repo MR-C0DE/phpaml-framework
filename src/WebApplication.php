@@ -14,6 +14,8 @@ use PHPAML\Mvc\View;
 use PHPAML\Routing\Router;
 use PHPAML\Session\Session;
 use PHPAML\Data\Connection;
+use PHPAML\Logging\Logger;
+use PHPAML\Middleware\RateLimitMiddleware;
 
 final class WebApplication
 {
@@ -40,10 +42,22 @@ final class WebApplication
         $this->router = new Router($this->container);
         $this->router->addRoutes($config['routes'] ?? []);
 
+        $logPath = isset($config['log_path']) ? (string) $config['log_path'] : null;
+        $logger = new Logger($logPath);
+        $this->container->set(Logger::class, $logger);
         $middlewares = [
-            new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false)),
-            new CsrfMiddleware($session),
+            new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger),
         ];
+        $rateLimit = $config['rate_limit'] ?? [];
+        if (is_array($rateLimit) && ($rateLimit['enabled'] ?? false)) {
+            $middlewares[] = new RateLimitMiddleware(
+                (string) ($rateLimit['storage_path'] ?? sys_get_temp_dir() . '/phpaml-rate-limits'),
+                (int) ($rateLimit['limit'] ?? 60),
+                (int) ($rateLimit['window'] ?? 60),
+                is_array($rateLimit['methods'] ?? null) ? $rateLimit['methods'] : ['POST', 'PUT', 'PATCH', 'DELETE']
+            );
+        }
+        $middlewares[] = new CsrfMiddleware($session);
         foreach ($config['middlewares'] ?? [] as $middlewareClass) {
             $middleware = $this->container->get($middlewareClass);
             if ($middleware instanceof MiddlewareInterface) {
