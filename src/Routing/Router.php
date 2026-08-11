@@ -13,6 +13,7 @@ use RuntimeException;
 
 final class Router
 {
+    private const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
     /** @var list<array{method: string, path: string, pattern: string, handler: array{0: class-string, 1: string}, middleware: list<class-string>, name: ?string}> */
     private array $routes = [];
 
@@ -23,15 +24,35 @@ final class Router
     /** @param array{0: class-string, 1: string} $handler @param list<class-string> $middleware */
     public function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
+        $method = strtoupper($method);
+        if (!in_array($method, self::METHODS, true)) {
+            throw new RuntimeException("Méthode HTTP de route invalide : '{$method}'.");
+        }
+        if (!isset($handler[0], $handler[1]) || !is_string($handler[0]) || !is_string($handler[1]) || !class_exists($handler[0]) || !method_exists($handler[0], $handler[1])) {
+            throw new RuntimeException('Contrôleur ou action de route invalide.');
+        }
+        foreach ($middleware as $class) {
+            if (!is_string($class) || !is_subclass_of($class, MiddlewareInterface::class)) {
+                throw new RuntimeException("Middleware de route invalide : '{$class}'.");
+            }
+        }
+        if ($name !== null && (!preg_match('/^[A-Za-z][A-Za-z0-9_.-]*$/', $name) || array_filter($this->routes, static fn(array $route): bool => $route['name'] === $name))) {
+            throw new RuntimeException("Nom de route invalide ou déjà utilisé : '{$name}'.");
+        }
         $path = '/' . trim($path, '/');
         $path = $path === '/' ? '/' : rtrim($path, '/');
-        $pattern = preg_replace_callback(
-            '/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/',
-            static fn (array $match): string => '(?P<' . $match[1] . '>[^/]+)',
-            $path
-        );
+        if (!preg_match('/^\/(?:[^{}]|\{[A-Za-z_][A-Za-z0-9_]*\})*$/', $path)) {
+            throw new RuntimeException("Chemin de route invalide : '{$path}'.");
+        }
+        $parts = preg_split('/(\{[A-Za-z_][A-Za-z0-9_]*\})/', $path, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [];
+        $pattern = '';
+        foreach ($parts as $part) {
+            $pattern .= preg_match('/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/', $part, $match)
+                ? '(?P<' . $match[1] . '>[^/]+)'
+                : preg_quote($part, '#');
+        }
         $this->routes[] = [
-            'method' => strtoupper($method),
+            'method' => $method,
             'path' => $path,
             'pattern' => '#^' . $pattern . '$#',
             'handler' => $handler,

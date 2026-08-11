@@ -24,4 +24,6 @@ jobs:
       - run: composer validate --no-check-publish
       - name: Lint framework sources
         shell: bash
-        run: find src -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Run security and routing tests
+        run: php tests/run.php

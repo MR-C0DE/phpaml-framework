@@ -9,6 +9,7 @@ use PHPAML\Http\Response;
 use PHPAML\Middleware\ErrorHandlerMiddleware;
 use PHPAML\Middleware\MiddlewareInterface;
 use PHPAML\Middleware\MiddlewarePipeline;
+use PHPAML\Middleware\CsrfMiddleware;
 use PHPAML\Mvc\View;
 use PHPAML\Routing\Router;
 use PHPAML\Session\Session;
@@ -25,7 +26,7 @@ final class WebApplication
     {
         $this->container = new Container();
         $this->container->set(Container::class, $this->container);
-        $session = new Session();
+        $session = new Session($config['session'] ?? []);
         $this->container->set(Session::class, $session);
         $this->container->set(View::class, new View((string) $config['views_path'], $session));
         if (!empty($config['database']['dsn'])) {
@@ -39,7 +40,10 @@ final class WebApplication
         $this->router = new Router($this->container);
         $this->router->addRoutes($config['routes'] ?? []);
 
-        $middlewares = [new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false))];
+        $middlewares = [
+            new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false)),
+            new CsrfMiddleware($session),
+        ];
         foreach ($config['middlewares'] ?? [] as $middlewareClass) {
             $middleware = $this->container->get($middlewareClass);
             if ($middleware instanceof MiddlewareInterface) {

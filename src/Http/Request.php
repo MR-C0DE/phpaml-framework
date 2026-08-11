@@ -6,6 +6,8 @@ namespace PHPAML\Http;
 
 final class Request
 {
+    public const MAX_BODY_BYTES = 1048576;
+    private const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
     /**
      * @param array<string, mixed> $query
      * @param array<string, mixed> $body
@@ -23,18 +25,35 @@ final class Request
         private array $attributes = []
     ) {
         $this->method = strtoupper($method);
+        if (!in_array($this->method, self::METHODS, true)) {
+            throw new HttpException(400, 'Méthode HTTP invalide.');
+        }
         $this->path = '/' . ltrim($path, '/');
     }
 
-    public static function capture(): self
+    public static function capture(int $maxBodyBytes = self::MAX_BODY_BYTES): self
     {
         $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/');
         $body = $_POST;
         $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
-        $rawBody = file_get_contents('php://input') ?: '';
+        $declaredLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if ($declaredLength > $maxBodyBytes) {
+            throw new HttpException(413, 'Corps de requête trop volumineux.');
+        }
+        $rawBody = file_get_contents('php://input', false, null, 0, $maxBodyBytes + 1) ?: '';
+        if (strlen($rawBody) > $maxBodyBytes) {
+            throw new HttpException(413, 'Corps de requête trop volumineux.');
+        }
         if (str_contains($contentType, 'application/json') && $rawBody !== '') {
-            $decoded = json_decode($rawBody, true);
-            $body = is_array($decoded) ? $decoded : [];
+            try {
+                $decoded = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                throw new HttpException(400, 'Corps JSON invalide.');
+            }
+            if (!is_array($decoded)) {
+                throw new HttpException(400, 'Le corps JSON doit être un objet ou un tableau.');
+            }
+            $body = $decoded;
         } elseif ($body === [] && $rawBody !== '') {
             parse_str($rawBody, $body);
         }
