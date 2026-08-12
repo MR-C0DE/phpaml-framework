@@ -1,6 +1,7 @@
 {
     "name": "phpaml/framework",
     "description": "PHPAML MVC framework core",
+    "license": "proprietary",
     "type": "library",
     "require": {
         "php": ">=8.2",
@@ -10,5 +11,8 @@
         "psr-4": {
             "PHPAML\\": "src/"
         }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
     }
 }
