@@ -93,7 +93,14 @@ final class Container
                 }
                 throw new RuntimeException("Impossible de résoudre '{$parameter->getName()}' pour '{$class}'.");
             }
-            $arguments[] = $this->get($type->getName());
+            try {
+                $arguments[] = $this->get($type->getName());
+            } catch (RuntimeException $error) {
+                if (!$type->allowsNull() || !$parameter->isDefaultValueAvailable()) {
+                    throw $error;
+                }
+                $arguments[] = $parameter->getDefaultValue();
+            }
         }
 
         return $reflection->newInstanceArgs($arguments);

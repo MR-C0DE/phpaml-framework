@@ -15,9 +15,14 @@ use PHPAML\Data\QueryBuilder;
 use PHPAML\Data\Migrator;
 use PHPAML\Logging\Logger;
 use PHPAML\Middleware\RateLimitMiddleware;
+use PHPAML\Middleware\CsrfMiddleware;
+use PHPAML\Middleware\SecurityHeadersMiddleware;
+use PHPAML\Security\CspNonce;
+use PHPAML\Session\Session;
+use PHPAML\WebApplication;
 
 final class SecurityTestController { public function show(Request $request): Response { return Response::json(['id' => $request->attribute('id')]); } }
-final class SecurityTestMiddleware implements MiddlewareInterface { public function process(Request $request, Closure $next): Response { return $next($request); } }
+final class SecurityTestMiddleware implements MiddlewareInterface { public function process(Request $request, Closure $next): Response { return $next($request)->withHeader('X-Test-Pipeline', 'active'); } }
 
 $tests = [];
 $test = static function (string $name, Closure $case) use (&$tests): void { $tests[$name] = $case; };
@@ -49,6 +54,61 @@ $test('JSON non encodable et redirections externes sont refusés', function () u
 
 $test('les injections dans les en-têtes sont refusées', function () use ($throws): void {
     $throws(fn() => Response::html('ok')->withHeader('X-Test', "ok\r\nInjected: yes"));
+});
+
+$test('le contrat CSRF expose et renouvelle le jeton pour AML Engine', function () use ($expect): void {
+    $session = new Session();
+    $token = $session->token();
+    $expect(str_contains($session->csrfMeta(), 'name="csrf-token"'), 'La balise meta CSRF doit être disponible.');
+    $middleware = new CsrfMiddleware($session);
+    $next = static fn (): Response => Response::json(['ok' => true]);
+    $accepted = $middleware->process(new Request('POST', '/api/save', [], [], ['HTTP_X_CSRF_TOKEN' => $token]), $next);
+    $expect($accepted->status() === 200 && ($accepted->headers()['X-CSRF-Token'] ?? '') === $token, 'Le jeton valide doit être accepté et renouvelé.');
+    $rejected = $middleware->process(new Request('POST', '/api/save'), $next);
+    $expect($rejected->status() === 419 && ($rejected->headers()['X-CSRF-Token'] ?? '') === $token, 'La réponse 419 doit fournir un nouveau jeton.');
+});
+
+$test('une destination AML View traverse le pipeline HTTP principal', function () use ($expect): void {
+    $application = new WebApplication(['middlewares' => [SecurityTestMiddleware::class]]);
+    $response = $application->handle(
+        new Request('GET', '/declarative'),
+        static fn (): Response => Response::html('<main>AML View</main>'),
+    );
+    $expect($response->status() === 200 && ($response->headers()['X-Test-Pipeline'] ?? '') === 'active', 'La destination déclarative doit traverser les middlewares globaux.');
+});
+
+$test('la CSP autorise uniquement le nonce du moteur AML View', function () use ($expect): void {
+    $capturedNonce = null;
+    $middleware = new SecurityHeadersMiddleware();
+    $response = $middleware->process(
+        new Request('GET', '/'),
+        static function (Request $request) use (&$capturedNonce): Response {
+            $capturedNonce = CspNonce::from($request);
+            return Response::html('<script nonce="injected-value">unsafe</script>');
+        },
+    );
+    $csp = $response->headers()['Content-Security-Policy'] ?? '';
+    $expect(is_string($capturedNonce) && str_contains($csp, "script-src 'self' 'nonce-{$capturedNonce}'"), 'La CSP doit utiliser le nonce immuable de la requête.');
+    $expect(!str_contains($csp, 'nonce-injected-value'), "Le contenu HTML ne doit jamais déterminer la politique CSP.");
+});
+
+$test('les erreurs CSRF et Rate Limit conservent les en-têtes de sécurité', function () use ($expect): void {
+    $rateDirectory = sys_get_temp_dir() . '/phpaml-pipeline-rate-' . bin2hex(random_bytes(6));
+    $application = new WebApplication([
+        'middlewares' => [SecurityHeadersMiddleware::class],
+        'rate_limit' => ['enabled' => true, 'storage_path' => $rateDirectory, 'limit' => 1, 'window' => 60],
+    ]);
+    $destination = static fn (): Response => Response::json(['ok' => true]);
+    $csrf = $application->handle(new Request('POST', '/save'), $destination);
+    $expect($csrf->status() === 419 && isset($csrf->headers()['Content-Security-Policy']), 'La réponse 419 doit conserver les protections HTTP.');
+
+    $session = $application->container()->get(Session::class);
+    $server = ['HTTP_X_CSRF_TOKEN' => $session->token(), 'REMOTE_ADDR' => '127.0.0.1'];
+    $application->handle(new Request('POST', '/save', [], [], $server), $destination);
+    $limited = $application->handle(new Request('POST', '/save', [], [], $server), $destination);
+    $expect($limited->status() === 429 && isset($limited->headers()['Content-Security-Policy']), 'La réponse 429 doit conserver les protections HTTP.');
+    foreach (glob($rateDirectory . '/*') ?: [] as $file) { unlink($file); }
+    if (is_dir($rateDirectory)) { rmdir($rateDirectory); }
 });
 
 $test('le QueryBuilder refuse les identifiants injectés et les insertions vides', function () use ($throws, $expect): void {

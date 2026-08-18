@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PHPAML;
 
+use Closure;
 use PHPAML\Http\Request;
 use PHPAML\Http\Response;
 use PHPAML\Middleware\ErrorHandlerMiddleware;
@@ -16,6 +17,7 @@ use PHPAML\Session\Session;
 use PHPAML\Data\Connection;
 use PHPAML\Logging\Logger;
 use PHPAML\Middleware\RateLimitMiddleware;
+use PHPAML\Middleware\SecurityHeadersMiddleware;
 
 final class WebApplication
 {
@@ -30,7 +32,9 @@ final class WebApplication
         $this->container->set(Container::class, $this->container);
         $session = new Session($config['session'] ?? []);
         $this->container->set(Session::class, $session);
-        $this->container->set(View::class, new View((string) $config['views_path'], $session));
+        if (isset($config['views_path']) && $config['views_path'] !== '') {
+            $this->container->set(View::class, new View((string) $config['views_path'], $session));
+        }
         if (!empty($config['database']['dsn'])) {
             $this->container->set(Connection::class, new Connection(
                 (string) $config['database']['dsn'],
@@ -45,9 +49,20 @@ final class WebApplication
         $logPath = isset($config['log_path']) ? (string) $config['log_path'] : null;
         $logger = new Logger($logPath);
         $this->container->set(Logger::class, $logger);
-        $middlewares = [
-            new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger),
-        ];
+        $outerMiddlewares = [];
+        $customMiddlewares = [];
+        foreach ($config['middlewares'] ?? [] as $middlewareClass) {
+            $middleware = $this->container->get($middlewareClass);
+            if (!$middleware instanceof MiddlewareInterface) {
+                continue;
+            }
+            if ($middleware instanceof SecurityHeadersMiddleware) {
+                $outerMiddlewares[] = $middleware;
+            } else {
+                $customMiddlewares[] = $middleware;
+            }
+        }
+        $middlewares = [...$outerMiddlewares, new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger)];
         $rateLimit = $config['rate_limit'] ?? [];
         if (is_array($rateLimit) && ($rateLimit['enabled'] ?? false)) {
             $middlewares[] = new RateLimitMiddleware(
@@ -58,20 +73,15 @@ final class WebApplication
             );
         }
         $middlewares[] = new CsrfMiddleware($session);
-        foreach ($config['middlewares'] ?? [] as $middlewareClass) {
-            $middleware = $this->container->get($middlewareClass);
-            if ($middleware instanceof MiddlewareInterface) {
-                $middlewares[] = $middleware;
-            }
-        }
+        array_push($middlewares, ...$customMiddlewares);
         $this->pipeline = new MiddlewarePipeline($middlewares);
     }
 
-    public function handle(Request $request): Response
+    public function handle(Request $request, ?Closure $destination = null): Response
     {
         return $this->pipeline->handle(
             $request,
-            fn (Request $request): Response => $this->router->dispatch($request)
+            $destination ?? fn (Request $request): Response => $this->router->dispatch($request)
         );
     }
 
