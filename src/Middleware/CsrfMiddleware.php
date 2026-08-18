@@ -22,8 +22,9 @@ final class CsrfMiddleware implements MiddlewareInterface
         }
         $provided = $request->input('_token', $request->header('X-CSRF-Token'));
         if (!is_string($provided) || !hash_equals($this->session->token(), $provided)) {
-            return Response::html('<h1>419</h1><p>Jeton CSRF invalide.</p>', 419);
+            return Response::html('<h1>419</h1><p>Jeton CSRF invalide.</p>', 419)
+                ->withHeader('X-CSRF-Token', $this->session->token());
         }
-        return $next($request);
+        return $next($request)->withHeader('X-CSRF-Token', $this->session->token());
     }
 }

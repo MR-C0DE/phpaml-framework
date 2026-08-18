@@ -63,4 +63,11 @@ final class Session
         }
         return $token;
     }
+
+    public function csrfMeta(): string
+    {
+        return '<meta name="csrf-token" content="'
+            . htmlspecialchars($this->token(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+            . '">';
+    }
 }
