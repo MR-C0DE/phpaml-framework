@@ -14,6 +14,7 @@ final class Request
      * @param array<string, mixed> $server
      * @param array<string, string> $cookies
      * @param array<string, mixed> $attributes
+     * @param array<string, array{name?:string,tmp_name?:string,error?:int,size?:int,type?:string}> $files
      */
     public function __construct(
         private string $method,
@@ -22,7 +23,8 @@ final class Request
         private array $body = [],
         private array $server = [],
         private array $cookies = [],
-        private array $attributes = []
+        private array $attributes = [],
+        private array $files = []
     ) {
         $this->method = strtoupper($method);
         if (!in_array($this->method, self::METHODS, true)) {
@@ -63,7 +65,9 @@ final class Request
             $_GET,
             $body,
             $_SERVER,
-            $_COOKIE
+            $_COOKIE,
+            [],
+            $_FILES
         );
     }
 
@@ -93,6 +97,12 @@ final class Request
         return $this->cookies[$key] ?? $default;
     }
 
+    public function file(string $key): ?UploadedFile
+    {
+        $file = $this->files[$key] ?? null;
+        return is_array($file) ? new UploadedFile($file) : null;
+    }
+
     public function server(string $key, mixed $default = null): mixed
     {
         return $this->server[$key] ?? $default;
@@ -102,6 +112,14 @@ final class Request
     {
         $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
         return $this->server[$key] ?? $default;
+    }
+
+    public function expectsJson(): bool
+    {
+        $accept = strtolower((string) $this->header('Accept', ''));
+        return str_starts_with($this->path(), '/api/')
+            || $this->path() === '/api'
+            || str_contains($accept, 'application/json');
     }
 
     public function attribute(string $key, mixed $default = null): mixed

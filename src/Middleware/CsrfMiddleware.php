@@ -17,6 +17,9 @@ final class CsrfMiddleware implements MiddlewareInterface
 
     public function process(Request $request, Closure $next): Response
     {
+        if (preg_match('/^Bearer\s+\S+$/i', trim((string) $request->header('Authorization', '')))) {
+            return $next($request);
+        }
         if (in_array($request->method(), ['GET', 'HEAD', 'OPTIONS'], true)) {
             return $next($request);
         }
