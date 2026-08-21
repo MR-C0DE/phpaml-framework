@@ -14,7 +14,7 @@ use RuntimeException;
 final class Router
 {
     private const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
-    /** @var list<array{method: string, path: string, pattern: string, handler: array{0: class-string, 1: string}, middleware: list<class-string>, name: ?string}> */
+    /** @var list<array{method: string, path: string, pattern: string, handler: array{0: class-string, 1: string}, middleware: list<class-string>, abilities: list<string>, name: ?string}> */
     private array $routes = [];
 
     public function __construct(private Container $container)
@@ -22,7 +22,7 @@ final class Router
     }
 
     /** @param array{0: class-string, 1: string} $handler @param list<class-string> $middleware */
-    public function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null): void
+    public function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null, array $abilities = []): void
     {
         $method = strtoupper($method);
         if (!in_array($method, self::METHODS, true)) {
@@ -57,6 +57,7 @@ final class Router
             'pattern' => '#^' . $pattern . '$#',
             'handler' => $handler,
             'middleware' => $middleware,
+            'abilities' => array_values(array_filter($abilities, 'is_string')),
             'name' => $name,
         ];
     }
@@ -87,7 +88,8 @@ final class Router
                 '/' . trim($prefix, '/') . '/' . ltrim($path, '/'),
                 $handler,
                 array_merge($middleware, $routeConfig['middleware'] ?? []),
-                $routeConfig['name'] ?? null
+                $routeConfig['name'] ?? null,
+                is_array($routeConfig['abilities'] ?? null) ? $routeConfig['abilities'] : []
             );
         }
     }
@@ -106,7 +108,8 @@ final class Router
                 $path,
                 $handler,
                 $routeConfig['middleware'] ?? [],
-                $routeConfig['name'] ?? null
+                $routeConfig['name'] ?? null,
+                is_array($routeConfig['abilities'] ?? null) ? $routeConfig['abilities'] : []
             );
         }
     }
@@ -127,6 +130,10 @@ final class Router
                     $request = $request->withAttribute($key, urldecode($value));
                 }
             }
+            $request = $request
+                ->withAttribute('route.name', $route['name'])
+                ->withAttribute('route.abilities', $route['abilities'])
+                ->withAttribute('auth.required_abilities', $route['abilities']);
             $destination = function (Request $request) use ($route): Response {
                 [$controllerClass, $action] = $route['handler'];
                 $controller = $this->container->get($controllerClass);
