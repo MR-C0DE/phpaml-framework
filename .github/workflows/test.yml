@@ -19,7 +19,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo, pdo_sqlite
+          extensions: fileinfo, pdo, pdo_sqlite
           tools: composer
       - run: composer validate --no-check-publish
       - name: Lint framework sources
