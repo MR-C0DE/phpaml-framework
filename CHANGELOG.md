@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0-beta.2 — 2026-08-23
+
+- adopte la licence MIT et déclare cette licence dans Composer et le README.
+
 ## 0.3.0-beta.1 — 2026-08-21
 
 - charge `phpaml.json` et `.env`, puis génère le cache privé

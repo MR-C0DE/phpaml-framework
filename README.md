@@ -25,3 +25,8 @@ Certaines bases valident implicitement les instructions DDL : les méthodes
 `up()` et `down()` doivent donc être sûres pour le pilote ciblé et une sauvegarde
 est obligatoire avant la production. `Migrator::rollback()` annule d’abord la
 dernière migration et s’arrête à la première erreur.
+
+## Licence
+
+PHPAML Framework est un logiciel open source distribué sous
+[licence MIT](LICENSE).
