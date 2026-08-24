@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible problem in PHPAML Framework.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not report security vulnerabilities here. Use a private GitHub Security Advisory instead.
+  - type: input
+    id: version
+    attributes:
+      label: Affected version
+      placeholder: "Example: 0.1.0-beta.1"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "PHP version, operating system, browser or database when relevant"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Provide the shortest code or steps that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Sanitized output
+      description: Remove credentials, private URLs, personal data, and production content.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This report contains no credentials, tokens, private data, or personal information.
+          required: true
