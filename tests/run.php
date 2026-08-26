@@ -110,6 +110,25 @@ $test('WebApplication découvre automatiquement src/routes', function () use ($e
     rmdir($root);
 });
 
+$test('les paquets optionnels sont composés par un bootstrapper applicatif', function () use ($expect): void {
+    $service = new stdClass();
+    $called = false;
+    $application = new WebApplication([
+        'legacy_data_bootstrap' => false,
+        'bootstrappers' => [
+            static function (\PHPAML\Container $container, array $config) use ($service, &$called): void {
+                $called = ($config['name'] ?? null) === 'modular-test';
+                $container->set('optional.service', $service);
+            },
+            'not-a-callable',
+        ],
+        'name' => 'modular-test',
+    ]);
+
+    $expect($called, 'Le bootstrapper doit recevoir la configuration de l’application.');
+    $expect($application->container()->get('optional.service') === $service, 'Le bootstrapper doit pouvoir enregistrer un service.');
+});
+
 $test('les parties statiques des routes sont échappées', function () use ($expect): void {
     $router = new Router(new Container());
     $router->add('GET', '/v1.0/{id}', [SecurityTestController::class, 'show']);

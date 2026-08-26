@@ -1,0 +1,28 @@
+name: Public API compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backward-compatibility:
+    name: Compare public API with latest release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Select the latest published version
+        id: baseline
+        shell: bash
+        run: |
+          tag="$(git tag --sort=-v:refname | head -n 1)"
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Comparing HEAD with $tag"
+      - name: Reject accidental API breaks
+        uses: docker://nyholm/roave-bc-check-ga
+        with:
+          args: --from=${{ steps.baseline.outputs.tag }} --format=github-actions
+

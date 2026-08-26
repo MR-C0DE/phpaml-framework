@@ -37,6 +37,13 @@ final class WebApplication
         $this->container->set(Container::class, $this->container);
         $session = new Session($config['session'] ?? []);
         $this->container->set(Session::class, $session);
+        $bootstrappers = is_array($config['bootstrappers'] ?? null) ? $config['bootstrappers'] : [];
+        foreach ($bootstrappers as $bootstrapper) {
+            if (!is_callable($bootstrapper)) {
+                continue;
+            }
+            $bootstrapper($this->container, $config);
+        }
         $api = is_array($config['api'] ?? null) ? $config['api'] : [];
         if (($api['enabled'] ?? false) === true) {
             $tokenConfig = is_array($api['tokens'] ?? null) ? $api['tokens'] : [];
@@ -46,7 +53,11 @@ final class WebApplication
             ));
         }
         $dataConfig = is_array($config['data'] ?? null) ? $config['data'] : null;
-        if ($dataConfig !== null && class_exists(\AML\Data\Connections\ConnectionManager::class)) {
+        // Compatibility bridge for projects generated before application-owned
+        // bootstrappers. New projects register Data in public/index.php.
+        if (($config['legacy_data_bootstrap'] ?? true) === true
+            && $dataConfig !== null
+            && class_exists(\AML\Data\Connections\ConnectionManager::class)) {
             $projectRoot = (string) ($config['project_root'] ?? dirname((string) ($dataConfig['migrations_path'] ?? __DIR__), 2));
             $manager = new \AML\Data\Connections\ConnectionManager($projectRoot, $dataConfig);
             $this->container->set(\AML\Data\Connections\ConnectionManager::class, $manager);

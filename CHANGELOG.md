@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-beta.3 — 2026-08-26
+
+- ajoute un point de composition générique `bootstrappers` pour enregistrer
+  les modules optionnels sans imposer leur dépendance au Framework ;
+- conserve le branchement Data historique comme compatibilité temporaire pour
+  les projets créés par les bêtas précédentes ;
+- ajoute la détection automatique des ruptures de l’API publique dans la CI.
+
 ## 0.3.0-beta.2 — 2026-08-23
 
 - adopte la licence MIT et déclare cette licence dans Composer et le README.
