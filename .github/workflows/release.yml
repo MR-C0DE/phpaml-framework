@@ -1,0 +1,67 @@
+name: Publish framework archive
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - .github/workflows/release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$(git tag --sort=-v:refname | head -n 1)"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9] ]]; then
+            echo "No version tag found." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build reproducible archive
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive="phpaml-framework-${version}.zip"
+          git archive --format=zip --prefix="phpaml-framework-${version}/" --output="$archive" "$RELEASE_TAG"
+          sha256sum "$archive" > "$archive.sha256"
+          sha256sum --check "$archive.sha256"
+          unzip -t "$archive"
+
+      - name: Publish archive and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive="phpaml-framework-${version}.zip"
+          prerelease=()
+          if [[ "$version" =~ (alpha|beta|rc) ]]; then prerelease=(--prerelease); fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$archive" "$archive.sha256" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$archive" "$archive.sha256" \
+              "${prerelease[@]}" --verify-tag --generate-notes --title "PHPAML Framework ${version}"
+          fi
