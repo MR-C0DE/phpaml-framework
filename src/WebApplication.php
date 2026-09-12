@@ -111,7 +111,8 @@ final class WebApplication
         $middlewares = [...$outerMiddlewares];
         if (($api['enabled'] ?? false) === true) {
             $middlewares[] = new RequestIdMiddleware();
-            $middlewares[] = new ApiMiddleware($api);
+            $tokens = $this->container->get(TokenManager::class);
+            $middlewares[] = new ApiMiddleware($api, $tokens instanceof TokenManager ? $tokens : null);
         }
         $middlewares[] = new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger);
         $rateLimit = $config['rate_limit'] ?? [];
@@ -124,7 +125,8 @@ final class WebApplication
             );
         }
         if (($config['type'] ?? null) !== 'api') {
-            $middlewares[] = new CsrfMiddleware($session);
+            $apiPrefixes = ($api['enabled'] ?? false) === true ? [(string) ($api['prefix'] ?? '/api')] : [];
+            $middlewares[] = new CsrfMiddleware($session, $apiPrefixes);
         }
         array_push($middlewares, ...$customMiddlewares);
         $this->pipeline = new MiddlewarePipeline($middlewares);

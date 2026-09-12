@@ -43,6 +43,21 @@ use PHPAML\Api\AuthException;
 use PHPAML\Middleware\AbilityMiddleware;
 use PHPAML\Middleware\RedisRateLimitMiddleware;
 
+if (($argv[1] ?? '') === 'token-worker') {
+    $manager = new TokenManager((string) ($argv[2] ?? ''), 300);
+    $owner = (string) ($argv[3] ?? 'worker');
+    $count = max(1, (int) ($argv[4] ?? 1));
+    for ($index = 0; $index < $count; $index++) { $manager->issue($owner, 'concurrency'); }
+    exit(0);
+}
+
+if (($argv[1] ?? '') === 'rotate-worker') {
+    $manager = new TokenManager((string) ($argv[2] ?? ''), 300);
+    $replacement = $manager->rotate((string) ($argv[3] ?? ''));
+    if ($replacement !== null) { fwrite(STDOUT, $replacement); }
+    exit(0);
+}
+
 final class SecurityTestController { public function show(Request $request): Response { return Response::json(['id' => $request->attribute('id')]); } }
 final class SecurityTestMiddleware implements MiddlewareInterface { public function process(Request $request, Closure $next): Response { return $next($request)->withHeader('X-Test-Pipeline', 'active'); } }
 final class ResourceTestController
@@ -470,13 +485,89 @@ $test('les écritures idempotentes sont rejouées et les conflits refusés', fun
     $calls = 0;
     $next = static function () use (&$calls): Response { $calls++; return Response::json(['number' => $calls], 201); };
     $server = ['HTTP_IDEMPOTENCY_KEY' => 'create-item-123'];
-    $first = $middleware->process(new Request('POST', '/items', [], ['name' => 'A'], $server), $next);
-    $second = $middleware->process(new Request('POST', '/items', [], ['name' => 'A'], $server), $next);
-    $conflict = $middleware->process(new Request('POST', '/items', [], ['name' => 'B'], $server), $next);
+    $userA = fn (array $input): Request => (new Request('POST', '/items', [], $input, $server))->withAttribute('auth.id', 'user-a');
+    $userB = fn (array $input): Request => (new Request('POST', '/items', [], $input, $server))->withAttribute('auth.id', 'user-b');
+    $first = $middleware->process($userA(['name' => 'A']), $next);
+    $second = $middleware->process($userA(['name' => 'A']), $next);
+    $conflict = $middleware->process($userA(['name' => 'B']), $next);
     $expect($first->status() === 201 && $second->status() === 201 && $calls === 1, 'La même écriture ne doit être exécutée qu’une fois.');
     $expect(($second->headers()['Idempotency-Replayed'] ?? '') === 'true' && $conflict->status() === 409, 'Le rejeu et le conflit doivent être explicites.');
+    $otherUser = $middleware->process($userB(['name' => 'A']), $next);
+    $expect($otherUser->status() === 201 && $calls === 2 && $otherUser->content() !== $first->content(), 'Deux utilisateurs ne doivent jamais partager une réponse idempotente.');
     foreach (glob($directory . '/*') ?: [] as $file) { unlink($file); }
     rmdir($directory);
+});
+
+$test('l’idempotence authentifie avant tout rejeu et isole les propriétaires', function () use ($expect): void {
+    $directory = sys_get_temp_dir() . '/phpaml-idempotency-auth-' . bin2hex(random_bytes(6));
+    $tokenPath = sys_get_temp_dir() . '/phpaml-idempotency-tokens-' . bin2hex(random_bytes(6)) . '.json';
+    $tokens = new TokenManager($tokenPath, 60);
+    $tokenA = $tokens->issue('user-a');
+    $tokenB = $tokens->issue('user-b');
+    $middleware = new IdempotencyMiddleware(new FileIdempotencyStore($directory, 60), ['POST'], $tokens);
+    $auth = new ApiAuthMiddleware($tokens);
+    $calls = 0;
+    $next = static function (Request $request) use ($auth, &$calls): Response {
+        return $auth->process($request, static function (Request $authenticated) use (&$calls): Response {
+            $calls++;
+            return Response::json(['owner' => $authenticated->attribute('auth.id'), 'call' => $calls], 201);
+        });
+    };
+    $request = static fn (string $token): Request => new Request('POST', '/private', [], ['value' => 1], [
+        'HTTP_IDEMPOTENCY_KEY' => 'private-operation',
+        'HTTP_AUTHORIZATION' => 'Bearer ' . $token,
+    ]);
+    $firstA = $middleware->process($request($tokenA), $next);
+    $replayA = $middleware->process($request($tokenA), $next);
+    $firstB = $middleware->process($request($tokenB), $next);
+    $tokens->revoke($tokenB);
+    $revokedB = $middleware->process($request($tokenB), $next);
+    $invalid = $middleware->process($request('invalid-token'), $next);
+    $expect($firstA->status() === 201 && $replayA->content() === $firstA->content(), 'Le rejeu authentifié du même utilisateur a échoué.');
+    $expect($firstB->status() === 201 && $firstB->content() !== $firstA->content() && $calls === 2, 'Les propriétaires partagent encore une réponse privée.');
+    $expect($revokedB->status() === 401 && $invalid->status() === 401, 'Un token révoqué ou invalide a pu atteindre le cache.');
+    foreach (glob($directory . '/*') ?: [] as $file) { @unlink($file); }
+    @rmdir($directory); @unlink($tokenPath); @unlink($tokenPath . '.lock');
+});
+
+$test('le stockage des tokens résiste aux créations et rotations concurrentes', function () use ($expect): void {
+    $path = sys_get_temp_dir() . '/phpaml-token-concurrency-' . bin2hex(random_bytes(6)) . '.json';
+    $processes = [];
+    for ($worker = 0; $worker < 8; $worker++) {
+        $pipes = [];
+        $process = proc_open([PHP_BINARY, __FILE__, 'token-worker', $path, 'owner-' . $worker, '50'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process)) { throw new RuntimeException('Impossible de démarrer un processus de test.'); }
+        $processes[] = [$process, $pipes];
+    }
+    foreach ($processes as [$process, $pipes]) {
+        $error = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        $expect(proc_close($process) === 0, 'Une création concurrente a échoué : ' . trim($error));
+    }
+    $records = json_decode((string) file_get_contents($path), true);
+    $hashes = array_column(is_array($records) ? $records : [], 'hash');
+    $expect(count($hashes) === 400 && count(array_unique($hashes)) === 400, 'Des tokens concurrents ont été perdus ou dupliqués.');
+
+    $manager = new TokenManager($path, 300);
+    $original = $manager->issue('rotation-owner');
+    $rotations = [];
+    for ($worker = 0; $worker < 8; $worker++) {
+        $pipes = [];
+        $process = proc_open([PHP_BINARY, __FILE__, 'rotate-worker', $path, $original], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process)) { throw new RuntimeException('Impossible de démarrer une rotation concurrente.'); }
+        $rotations[] = [$process, $pipes];
+    }
+    $successful = [];
+    foreach ($rotations as [$process, $pipes]) {
+        $replacement = trim((string) stream_get_contents($pipes[1]));
+        $error = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        $expect(proc_close($process) === 0, 'Une rotation concurrente a échoué : ' . trim($error));
+        if ($replacement !== '') { $successful[] = $replacement; }
+    }
+    $expect(count($successful) === 1, 'Une seule rotation concurrente doit réussir.');
+    $expect($manager->authenticate($original) === null && $manager->authenticate($successful[0]) !== null, 'La rotation atomique a produit un état incohérent.');
+    @unlink($path); @unlink($path . '.lock');
 });
 
 $test('OpenAPI génère un client TypeScript utilisable', function () use ($expect): void {

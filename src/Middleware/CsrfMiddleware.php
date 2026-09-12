@@ -11,12 +11,19 @@ use PHPAML\Session\Session;
 
 final class CsrfMiddleware implements MiddlewareInterface
 {
-    public function __construct(private Session $session)
+    /** @param list<string> $excludedPrefixes */
+    public function __construct(private Session $session, private array $excludedPrefixes = [])
     {
     }
 
     public function process(Request $request, Closure $next): Response
     {
+        foreach ($this->excludedPrefixes as $prefix) {
+            $prefix = rtrim($prefix, '/');
+            if ($prefix !== '' && ($request->path() === $prefix || str_starts_with($request->path(), $prefix . '/'))) {
+                return $next($request);
+            }
+        }
         if (preg_match('/^Bearer\s+\S+$/i', trim((string) $request->header('Authorization', '')))) {
             return $next($request);
         }

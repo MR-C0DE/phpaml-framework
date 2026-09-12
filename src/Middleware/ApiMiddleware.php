@@ -9,11 +9,12 @@ use PHPAML\Api\ApiResponse;
 use PHPAML\Http\Request;
 use PHPAML\Http\Response;
 use PHPAML\Api\FileIdempotencyStore;
+use PHPAML\Api\TokenManager;
 
 final class ApiMiddleware implements MiddlewareInterface
 {
     /** @param array<string, mixed> $config */
-    public function __construct(private array $config = []) {}
+    public function __construct(private array $config = [], private ?TokenManager $tokens = null) {}
 
     public function process(Request $request, Closure $next): Response
     {
@@ -31,7 +32,11 @@ final class ApiMiddleware implements MiddlewareInterface
         );
         if (($production['idempotency'] ?? true) === true) {
             $directory = (string) ($production['idempotency_path'] ?? sys_get_temp_dir() . '/phpaml-idempotency');
-            $middlewares[] = new IdempotencyMiddleware(new FileIdempotencyStore($directory, (int) ($production['idempotency_ttl'] ?? 86400)));
+            $middlewares[] = new IdempotencyMiddleware(
+                new FileIdempotencyStore($directory, (int) ($production['idempotency_ttl'] ?? 86400)),
+                ['POST', 'PUT', 'PATCH'],
+                $this->tokens,
+            );
         }
         if (($production['http_cache'] ?? true) === true) {
             $middlewares[] = new HttpCacheMiddleware((int) ($production['cache_max_age'] ?? 0), (bool) ($production['cache_public'] ?? false));

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0-beta.4 — 2026-09-12
+
+- isole les réponses idempotentes par propriétaire authentifié et refuse tout
+  rejeu privé avant validation du jeton ;
+- rend atomiques les créations, rotations et révocations concurrentes des
+  jetons API ;
+- conserve la protection CSRF des pages web tout en exemptant correctement le
+  préfixe API des applications mixtes ;
+- ajoute des tests multiprocessus pour les jetons et des régressions dédiées à
+  l’idempotence entre utilisateurs.
+
 ## 0.3.0-beta.3 — 2026-08-26
 
 - ajoute un point de composition générique `bootstrappers` pour enregistrer
