@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace PHPAML\Api;
 
+/** @phpstan-consistent-constructor */
 abstract class ApiResource
 {
     /** @param array<string,mixed>|object $resource */
-    final public function __construct(protected array|object $resource) {}
+    public function __construct(protected array|object $resource) {}
 
     /** @return array<string,mixed> */
     abstract protected function fields(): array;
