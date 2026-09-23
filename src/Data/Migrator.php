@@ -57,7 +57,10 @@ final class Migrator
         return $completed;
     }
 
-    /** Roll back the latest migration batch, one migration by default. @return list<string> */
+    /**
+     * Roll back the latest migration batch, one migration by default.
+     * @return list<string>
+     */
     public function rollback(int $steps = 1): array
     {
         if ($steps < 1) {
@@ -97,7 +100,11 @@ final class Migrator
         });
     }
 
-    /** @template T @param callable(): T $operation @return T */
+    /**
+     * @template T
+     * @param callable(): T $operation
+     * @return T
+     */
     private function withLock(callable $operation): mixed
     {
         if (!is_dir($this->directory) && !mkdir($this->directory, 0755, true) && !is_dir($this->directory)) {

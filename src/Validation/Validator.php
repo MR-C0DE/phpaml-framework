@@ -19,7 +19,10 @@ final class Validator
     {
     }
 
-    /** @param array<string, mixed> $data @param array<string, list<string>|string> $rules */
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, list<string>|string> $rules
+     */
     public function validate(array $data, array $rules): bool
     {
         $this->errors = [];

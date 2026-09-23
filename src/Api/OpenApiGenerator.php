@@ -10,7 +10,10 @@ final class OpenApiGenerator
     {
     }
 
-    /** @param list<array<string, mixed>>|array<string, mixed> $routes @return array<string, mixed> */
+    /**
+     * @param list<array<string, mixed>>|array<string, mixed> $routes
+     * @return array<string, mixed>
+     */
     public function generate(array $routes, string $serverUrl = '/'): array
     {
         $paths = [];
@@ -23,7 +26,7 @@ final class OpenApiGenerator
             preg_match_all('/\{([A-Za-z_][A-Za-z0-9_]*)\}/', $path, $matches);
             $parameters = array_map(static fn (string $name): array => [
                 'name' => $name, 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string'],
-            ], $matches[1] ?? []);
+            ], $matches[1]);
             $operation = [
                 'operationId' => $route['name'] ?? $this->operationId($method, $path),
                 'responses' => ['200' => ['description' => 'Réponse réussie']],
@@ -48,7 +51,10 @@ final class OpenApiGenerator
         ];
     }
 
-    /** @param list<array<string, mixed>>|array<string, mixed> $routes @return list<array<string, mixed>> */
+    /**
+     * @param list<array<string, mixed>>|array<string, mixed> $routes
+     * @return list<array<string, mixed>>
+     */
     private function normalize(array $routes): array
     {
         if (array_is_list($routes)) {

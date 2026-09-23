@@ -64,7 +64,8 @@ final class WebApplication
         // bootstrappers. New projects register Data in public/index.php.
         if (($config['legacy_data_bootstrap'] ?? true) === true
             && $dataConfig !== null
-            && class_exists(\AML\Data\Connections\ConnectionManager::class)) {
+            && class_exists(\AML\Data\Connections\ConnectionManager::class)
+            && class_exists(\AML\Data\Connection::class)) {
             $projectRoot = (string) ($config['project_root'] ?? dirname((string) ($dataConfig['migrations_path'] ?? __DIR__), 2));
             $manager = new \AML\Data\Connections\ConnectionManager($projectRoot, $dataConfig);
             $this->container->set(\AML\Data\Connections\ConnectionManager::class, $manager);

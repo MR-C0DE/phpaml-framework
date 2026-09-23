@@ -115,7 +115,7 @@ final class ApplicationConfig
             foreach (['dsn' => 'DATA_DSN', 'database' => 'DATA_DATABASE', 'host' => 'DATA_HOST', 'port' => 'DATA_PORT', 'username' => 'DATA_USERNAME', 'password' => 'DATA_PASSWORD', 'uri' => 'DATA_URI'] as $key => $environmentName) {
                 $main[$key] = $env($environmentName, $main[$key] ?? null);
             }
-            if (($main['driver'] ?? null) === 'sqlite' && is_string($main['database'] ?? null)) {
+            if ($main['driver'] === 'sqlite' && is_string($main['database'] ?? null)) {
                 $main['database'] = self::absolute($projectRoot, $main['database']);
             }
             $connections['main'] = $main;

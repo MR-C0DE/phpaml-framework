@@ -18,7 +18,10 @@ final class ApiResponse
         return self::ok($data, 201);
     }
 
-    /** @param list<mixed> $data @param array<string, mixed> $meta */
+    /**
+     * @param list<mixed> $data
+     * @param array<string, mixed> $meta
+     */
     public static function collection(array $data, array $meta = []): Response
     {
         $payload = ['data' => $data];

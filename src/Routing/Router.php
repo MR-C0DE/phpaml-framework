@@ -30,7 +30,11 @@ final class Router
     {
     }
 
-    /** @param array{0: class-string, 1: string} $handler @param list<class-string> $middleware */
+    /**
+     * @param array<mixed> $handler
+     * @param array<mixed> $middleware
+     * @param list<string> $abilities
+     */
     public function add(string $method, string $path, array $handler, array $middleware = [], ?string $name = null, array $abilities = []): void
     {
         $method = strtoupper($method);
@@ -40,10 +44,13 @@ final class Router
         if (!isset($handler[0], $handler[1]) || !is_string($handler[0]) || !is_string($handler[1]) || !class_exists($handler[0]) || !method_exists($handler[0], $handler[1])) {
             throw new RuntimeException('Contrôleur ou action de route invalide.');
         }
+        $handler = [$handler[0], $handler[1]];
+        $normalizedMiddleware = [];
         foreach ($middleware as $class) {
             if (!is_string($class) || !is_subclass_of($class, MiddlewareInterface::class)) {
-                throw new RuntimeException("Middleware de route invalide : '{$class}'.");
+                throw new RuntimeException('Middleware de route invalide.');
             }
+            $normalizedMiddleware[] = $class;
         }
         if ($name !== null && (!preg_match('/^[A-Za-z][A-Za-z0-9_.-]*$/', $name) || isset($this->nameIndex[$name]))) {
             throw new RuntimeException("Nom de route invalide ou déjà utilisé : '{$name}'.");
@@ -68,7 +75,7 @@ final class Router
             'prefix' => $staticPrefix,
             'pattern' => '#^' . $pattern . '$#',
             'handler' => $handler,
-            'middleware' => $middleware,
+            'middleware' => $normalizedMiddleware,
             'abilities' => array_values(array_filter($abilities, 'is_string')),
             'name' => $name,
         ];
@@ -79,13 +86,19 @@ final class Router
         }
     }
 
-    /** @param array{0: class-string, 1: string} $handler */
+    /**
+     * @param array{0: class-string, 1: string} $handler
+     * @param list<class-string> $middleware
+     */
     public function get(string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
         $this->add('GET', $path, $handler, $middleware, $name);
     }
 
-    /** @param array{0: class-string, 1: string} $handler */
+    /**
+     * @param array{0: class-string, 1: string} $handler
+     * @param list<class-string> $middleware
+     */
     public function post(string $path, array $handler, array $middleware = [], ?string $name = null): void
     {
         $this->add('POST', $path, $handler, $middleware, $name);
@@ -99,19 +112,26 @@ final class Router
     {
         foreach ($routes as $definition => $routeConfig) {
             [$method, $path] = array_pad(explode(' ', $definition, 2), 2, '');
-            $handler = isset($routeConfig['handler']) ? $routeConfig['handler'] : $routeConfig;
+            $structured = !array_is_list($routeConfig);
+            $handler = $structured ? ($routeConfig['handler'] ?? []) : $routeConfig;
+            $routeMiddleware = $structured && is_array($routeConfig['middleware'] ?? null)
+                ? array_values(array_filter($routeConfig['middleware'], 'is_string'))
+                : [];
+            $routeAbilities = $structured && is_array($routeConfig['abilities'] ?? null)
+                ? array_values(array_filter($routeConfig['abilities'], 'is_string'))
+                : [];
             $this->add(
                 $method,
                 '/' . trim($prefix, '/') . '/' . ltrim($path, '/'),
                 $handler,
-                array_merge($middleware, $routeConfig['middleware'] ?? []),
-                $routeConfig['name'] ?? null,
-                is_array($routeConfig['abilities'] ?? null) ? $routeConfig['abilities'] : []
+                array_merge($middleware, $routeMiddleware),
+                $structured && is_string($routeConfig['name'] ?? null) ? $routeConfig['name'] : null,
+                $routeAbilities,
             );
         }
     }
 
-    /** @param array<string, array{0: class-string, 1: string}|array{handler: array{0: class-string, 1: string}, middleware?: list<class-string>, name?: string}> $routes */
+    /** @param array<string, array{0: class-string, 1: string}|array{handler: array{0: class-string, 1: string}, middleware?: list<class-string>, abilities?: list<string>, name?: string}> $routes */
     public function addRoutes(array $routes): void
     {
         foreach ($routes as $definition => $routeConfig) {
@@ -119,14 +139,17 @@ final class Router
             if ($method === '' || $path === '') {
                 throw new RuntimeException("Route invalide : '{$definition}'.");
             }
-            $handler = isset($routeConfig['handler']) ? $routeConfig['handler'] : $routeConfig;
+            if (array_is_list($routeConfig)) {
+                $this->add($method, $path, $routeConfig);
+                continue;
+            }
             $this->add(
                 $method,
                 $path,
-                $handler,
+                $routeConfig['handler'],
                 $routeConfig['middleware'] ?? [],
                 $routeConfig['name'] ?? null,
-                is_array($routeConfig['abilities'] ?? null) ? $routeConfig['abilities'] : []
+                $routeConfig['abilities'] ?? []
             );
         }
     }

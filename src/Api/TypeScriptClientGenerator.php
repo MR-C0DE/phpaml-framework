@@ -20,7 +20,7 @@ final class TypeScriptClientGenerator
                 }
                 $name = $this->identifier((string) ($operation['operationId'] ?? $verb . $path));
                 preg_match_all('/\{([A-Za-z_][A-Za-z0-9_]*)\}/', (string) $path, $matches);
-                $params = array_map(static fn (string $param): string => $param . ': string | number', $matches[1] ?? []);
+                $params = array_map(static fn (string $param): string => $param . ': string | number', $matches[1]);
                 $hasBody = in_array(strtolower((string) $verb), ['post', 'put', 'patch'], true);
                 if ($hasBody) {
                     $params[] = 'body: unknown';

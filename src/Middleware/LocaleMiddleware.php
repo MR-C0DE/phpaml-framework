@@ -57,7 +57,7 @@ final class LocaleMiddleware implements MiddlewareInterface
     {
         foreach ($this->detection as $strategy) {
             $candidate = match ($strategy) {
-                'route' => explode('/', trim($request->path(), '/'))[0] ?? '',
+                'route' => explode('/', trim($request->path(), '/'))[0],
                 'cookie' => (string) $request->cookie($this->cookie, ''),
                 'header' => $this->fromAcceptLanguage((string) $request->header('Accept-Language', '')),
                 default => '',

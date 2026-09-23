@@ -22,11 +22,14 @@ jobs:
           extensions: fileinfo, pdo, pdo_sqlite
           tools: composer
       - run: composer validate --no-check-publish
+      - run: composer install --no-interaction --prefer-dist
       - name: Lint framework sources
         shell: bash
         run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Run security and routing tests
         run: php tests/run.php
+      - name: Run static analysis
+        run: composer analyse -- --no-progress --memory-limit=512M
 
   redis-session:
     name: Redis session integration

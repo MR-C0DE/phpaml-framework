@@ -36,6 +36,7 @@ final class TokenManager
         return null;
     }
 
+    /** @param array<string, mixed> $token */
     public function can(array $token, string $ability): bool
     {
         $abilities = array_values(array_filter($token['abilities'] ?? [], 'is_string'));

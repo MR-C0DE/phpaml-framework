@@ -7,7 +7,7 @@ namespace PHPAML\Api;
 abstract class ApiResource
 {
     /** @param array<string,mixed>|object $resource */
-    public function __construct(protected array|object $resource) {}
+    final public function __construct(protected array|object $resource) {}
 
     /** @return array<string,mixed> */
     abstract protected function fields(): array;
@@ -15,7 +15,10 @@ abstract class ApiResource
     /** @return array<string,ApiResource|list<ApiResource>|null> */
     protected function relations(): array { return []; }
 
-    /** @param list<string> $include @return array<string,mixed> */
+    /**
+     * @param list<string> $include
+     * @return array<string,mixed>
+     */
     final public function resolve(array $include = []): array
     {
         $result = $this->fields();
@@ -30,7 +33,11 @@ abstract class ApiResource
         return $result;
     }
 
-    /** @param iterable<array<string,mixed>|object> $items @return list<array<string,mixed>> */
+    /**
+     * @param iterable<array<string,mixed>|object> $items
+     * @param list<string> $include
+     * @return list<array<string,mixed>>
+     */
     final public static function collection(iterable $items, array $include = []): array
     {
         $result = [];

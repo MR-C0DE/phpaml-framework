@@ -33,7 +33,10 @@ final class Logger
         error_log((string) $line);
     }
 
-    /** @param array<string, mixed> $values @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
     private function redact(array $values): array
     {
         foreach ($values as $key => $value) {

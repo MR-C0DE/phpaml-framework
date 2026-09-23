@@ -24,7 +24,10 @@ final class FileIdempotencyStore
         return $handle;
     }
 
-    /** @param resource $handle @return null|array<string, mixed> */
+    /**
+     * @param resource $handle
+     * @return null|array<string, mixed>
+     */
     public function read($handle): ?array
     {
         rewind($handle);
@@ -35,7 +38,10 @@ final class FileIdempotencyStore
         return $value;
     }
 
-    /** @param resource $handle @param array<string, mixed> $value */
+    /**
+     * @param resource $handle
+     * @param array<string, mixed> $value
+     */
     public function write($handle, array $value): void
     {
         $value['expires_at'] = time() + $this->ttl;

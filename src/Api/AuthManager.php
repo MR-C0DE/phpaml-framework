@@ -37,7 +37,10 @@ final class AuthManager
         return $this->user((string) $this->connection->pdo()->lastInsertId()) ?? throw new \RuntimeException('Utilisateur introuvable après création.');
     }
 
-    /** @param list<string> $abilities @return array{token:string,user:array<string,mixed>} */
+    /**
+     * @param list<string> $abilities
+     * @return array{token:string,user:array{id:int,name:string,email:string,created_at:string}}
+     */
     public function login(string $email, string $password, string $device = 'api', array $abilities = ['*']): array
     {
         $statement = $this->connection->pdo()->prepare('SELECT * FROM api_users WHERE email = :email LIMIT 1');
@@ -63,7 +66,10 @@ final class AuthManager
         return is_array($row) ? $this->publicUser($row) : null;
     }
 
-    /** @param array<string,mixed> $row @return array{id:int,name:string,email:string,created_at:string} */
+    /**
+     * @param array<string,mixed> $row
+     * @return array{id:int,name:string,email:string,created_at:string}
+     */
     private function publicUser(array $row): array
     {
         return ['id' => (int) $row['id'], 'name' => (string) $row['name'], 'email' => (string) $row['email'], 'created_at' => (string) $row['created_at']];

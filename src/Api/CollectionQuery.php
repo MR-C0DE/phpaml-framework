@@ -9,7 +9,11 @@ use InvalidArgumentException;
 /** Parse uniquement les champs explicitement autorisés; aucune entrée cliente ne devient un identifiant SQL. */
 final class CollectionQuery
 {
-    /** @param list<string> $filterable @param list<string> $sortable @param list<string> $searchable */
+    /**
+     * @param list<string> $filterable
+     * @param list<string> $sortable
+     * @param list<string> $searchable
+     */
     public function __construct(
         private array $filterable,
         private array $sortable,
@@ -17,7 +21,10 @@ final class CollectionQuery
         private int $maximumPerPage = 100,
     ) {}
 
-    /** @param array<string,mixed> $query @return array{page:int,per_page:int,filters:array<string,mixed>,sort:list<array{field:string,direction:string}>,search:?string,searchable:list<string>} */
+    /**
+     * @param array<string,mixed> $query
+     * @return array{page:int,per_page:int,filters:array<string,mixed>,sort:list<array{field:string,direction:string}>,search:?string,searchable:list<string>}
+     */
     public function parse(array $query): array
     {
         $filters = [];

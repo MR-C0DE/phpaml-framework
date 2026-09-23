@@ -6,6 +6,7 @@ namespace PHPAML\Http;
 
 final class Cookie
 {
+    /** @param array{path?: string, domain?: string, secure?: bool, httponly?: bool, samesite?: string} $options */
     public static function set(string $name, string $value, int $expires = 0, array $options = []): bool
     {
         return setcookie($name, $value, [
