@@ -11,8 +11,15 @@ final class Env
 
     public static function load(string $path): void
     {
+        self::$values = self::read($path);
+    }
+
+    /** @return array<string, string> */
+    public static function read(string $path): array
+    {
+        $values = [];
         if (!is_file($path)) {
-            return;
+            return $values;
         }
         foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
             $line = trim($line);
@@ -20,8 +27,9 @@ final class Env
                 continue;
             }
             [$key, $value] = array_map('trim', explode('=', $line, 2));
-            self::$values[$key] = trim($value, "\"'");
+            $values[$key] = trim($value, "\"'");
         }
+        return $values;
     }
 
     public static function get(string $key, mixed $default = null): mixed

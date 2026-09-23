@@ -12,7 +12,7 @@ use PHPAML\Session\Session;
 final class CsrfMiddleware implements MiddlewareInterface
 {
     /** @param list<string> $excludedPrefixes */
-    public function __construct(private Session $session, private array $excludedPrefixes = [])
+    public function __construct(private Session|Closure $session, private array $excludedPrefixes = [])
     {
     }
 
@@ -31,10 +31,20 @@ final class CsrfMiddleware implements MiddlewareInterface
             return $next($request);
         }
         $provided = $request->input('_token', $request->header('X-CSRF-Token'));
-        if (!is_string($provided) || !hash_equals($this->session->token(), $provided)) {
+        $session = $this->session();
+        if (!is_string($provided) || !hash_equals($session->token(), $provided)) {
             return Response::html('<h1>419</h1><p>Jeton CSRF invalide.</p>', 419)
-                ->withHeader('X-CSRF-Token', $this->session->token());
+                ->withHeader('X-CSRF-Token', $session->token());
         }
-        return $next($request)->withHeader('X-CSRF-Token', $this->session->token());
+        return $next($request)->withHeader('X-CSRF-Token', $session->token());
+    }
+
+    private function session(): Session
+    {
+        $session = $this->session instanceof Closure ? ($this->session)() : $this->session;
+        if (!$session instanceof Session) {
+            throw new \RuntimeException('Le fournisseur de session doit retourner une session PHPAML.');
+        }
+        return $session;
     }
 }

@@ -23,6 +23,7 @@ use PHPAML\Api\TokenManager;
 use PHPAML\Api\AuthManager;
 use PHPAML\Middleware\ApiMiddleware;
 use PHPAML\Middleware\RequestIdMiddleware;
+use PHPAML\Middleware\LocaleMiddleware;
 
 final class WebApplication
 {
@@ -35,8 +36,15 @@ final class WebApplication
     {
         $this->container = new Container();
         $this->container->set(Container::class, $this->container);
-        $session = new Session($config['session'] ?? []);
-        $this->container->set(Session::class, $session);
+        $sessionConfig = is_array($config['session'] ?? null) ? $config['session'] : [];
+        $this->container->scoped(Session::class, static function (Container $container) use ($sessionConfig): Session {
+            $request = $container->get(Request::class);
+            $resolvedConfig = $sessionConfig;
+            if (!array_key_exists('secure', $resolvedConfig) && $request instanceof Request) {
+                $resolvedConfig['secure'] = $request->isSecure();
+            }
+            return new Session($resolvedConfig);
+        });
         $bootstrappers = is_array($config['bootstrappers'] ?? null) ? $config['bootstrappers'] : [];
         foreach ($bootstrappers as $bootstrapper) {
             if (!is_callable($bootstrapper)) {
@@ -64,7 +72,11 @@ final class WebApplication
             $this->container->set(\AML\Data\Connection::class, $manager->sql());
         }
         if (isset($config['views_path']) && $config['views_path'] !== '') {
-            $this->container->set(View::class, new View((string) $config['views_path'], $session));
+            $viewsPath = (string) $config['views_path'];
+            $this->container->scoped(
+                View::class,
+                static fn (Container $container): View => new View($viewsPath, $container->get(Session::class))
+            );
         }
         if (!empty($config['database']['dsn'])) {
             $legacyConnection = new Connection(
@@ -115,6 +127,26 @@ final class WebApplication
             $middlewares[] = new ApiMiddleware($api, $tokens instanceof TokenManager ? $tokens : null);
         }
         $middlewares[] = new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger);
+        $i18n = is_array($config['i18n'] ?? null) ? $config['i18n'] : [];
+        if (($i18n['enabled'] ?? false) === true
+            && class_exists(\AML\I18n\I18n::class)
+            && class_exists(\AML\I18n\Translator::class)) {
+            \AML\I18n\I18n::configure(
+                (string) ($i18n['directory'] ?? ''),
+                (string) ($i18n['default'] ?? 'en'),
+                (string) ($i18n['fallback'] ?? 'en'),
+            );
+            $middlewares[] = new LocaleMiddleware(
+                is_array($i18n['supported'] ?? null) ? $i18n['supported'] : ['en'],
+                (string) ($i18n['fallback'] ?? 'en'),
+                is_array($i18n['detection'] ?? null) ? $i18n['detection'] : ['route', 'cookie', 'header'],
+                (string) ($i18n['cookie'] ?? 'phpaml_locale'),
+                static fn (string $locale, Closure $next): Response => \AML\I18n\I18n::within(
+                    \AML\I18n\I18n::translator()->withLocale($locale),
+                    $next,
+                ),
+            );
+        }
         $rateLimit = $config['rate_limit'] ?? [];
         if (is_array($rateLimit) && ($rateLimit['enabled'] ?? false)) {
             $middlewares[] = new RateLimitMiddleware(
@@ -126,7 +158,7 @@ final class WebApplication
         }
         if (($config['type'] ?? null) !== 'api') {
             $apiPrefixes = ($api['enabled'] ?? false) === true ? [(string) ($api['prefix'] ?? '/api')] : [];
-            $middlewares[] = new CsrfMiddleware($session, $apiPrefixes);
+            $middlewares[] = new CsrfMiddleware(fn (): object => $this->container->get(Session::class), $apiPrefixes);
         }
         array_push($middlewares, ...$customMiddlewares);
         $this->pipeline = new MiddlewarePipeline($middlewares);
@@ -134,10 +166,16 @@ final class WebApplication
 
     public function handle(Request $request, ?Closure $destination = null): Response
     {
-        return $this->pipeline->handle(
-            $request,
-            $destination ?? fn (Request $request): Response => $this->router->dispatch($request)
-        );
+        $this->container->beginScope();
+        $this->container->setScoped(Request::class, $request);
+        try {
+            return $this->pipeline->handle(
+                $request,
+                $destination ?? fn (Request $request): Response => $this->router->dispatch($request)
+            );
+        } finally {
+            $this->container->endScope();
+        }
     }
 
     public function run(): void

@@ -7,6 +7,7 @@ PHPAML\Autoloader::register(['PHPAML\\' => dirname(__DIR__) . '/src']);
 
 use PHPAML\Container;
 use PHPAML\Config\ApplicationConfig;
+use PHPAML\Config\Env;
 use PHPAML\Http\Request;
 use PHPAML\Http\Response;
 use PHPAML\Middleware\MiddlewareInterface;
@@ -19,8 +20,11 @@ use PHPAML\Logging\Logger;
 use PHPAML\Middleware\RateLimitMiddleware;
 use PHPAML\Middleware\CsrfMiddleware;
 use PHPAML\Middleware\SecurityHeadersMiddleware;
+use PHPAML\Middleware\LocaleMiddleware;
 use PHPAML\Security\CspNonce;
 use PHPAML\Session\Session;
+use PHPAML\Session\SessionStoreInterface;
+use PHPAML\Session\RedisSessionStore;
 use PHPAML\WebApplication;
 use PHPAML\Api\ApiResponse;
 use PHPAML\Api\TokenManager;
@@ -60,6 +64,30 @@ if (($argv[1] ?? '') === 'rotate-worker') {
 
 final class SecurityTestController { public function show(Request $request): Response { return Response::json(['id' => $request->attribute('id')]); } }
 final class SecurityTestMiddleware implements MiddlewareInterface { public function process(Request $request, Closure $next): Response { return $next($request)->withHeader('X-Test-Pipeline', 'active'); } }
+final class MemorySessionStore implements SessionStoreInterface
+{
+    /** @var array<string, mixed> */
+    private array $values = [];
+    public int $closeCount = 0;
+    public function set(string $key, mixed $value): void { $this->values[$key] = $value; }
+    public function get(string $key, mixed $default = null): mixed { return $this->values[$key] ?? $default; }
+    public function remove(string $key): void { unset($this->values[$key]); }
+    public function regenerate(): void {}
+    public function close(): void { $this->closeCount++; }
+}
+final class MemoryRedisClient
+{
+    /** @var array<string, array<string, string>> */
+    public array $hashes = [];
+    /** @var array<string, int> */
+    public array $expirations = [];
+    public function hSet(string $key, string $field, string $value): int { $this->hashes[$key][$field] = $value; return 1; }
+    public function hGet(string $key, string $field): string|false { return $this->hashes[$key][$field] ?? false; }
+    public function hDel(string $key, string $field): int { unset($this->hashes[$key][$field]); return 1; }
+    public function expire(string $key, int $ttl): bool { $this->expirations[$key] = $ttl; return true; }
+    public function exists(string $key): int { return isset($this->hashes[$key]) ? 1 : 0; }
+    public function rename(string $from, string $to): bool { $this->hashes[$to] = $this->hashes[$from]; unset($this->hashes[$from]); return true; }
+}
 final class ResourceTestController
 {
     public function index(Request $request): Response { return Response::json([]); }
@@ -91,6 +119,7 @@ $test('phpaml.json et .env génèrent la configuration runtime', function () use
         'database' => ['dsn' => 'sqlite::memory:'],
         'api' => ['enabled' => true, 'cors' => ['origins' => ['https://example.test']], 'tokens' => ['storage_path' => 'runtime/storage/tokens.json']],
         'data' => ['default' => 'main', 'connections' => ['main' => ['driver' => 'sqlite', 'database' => 'runtime/storage/data.sqlite']]],
+        'i18n' => ['enabled' => true, 'default' => 'en', 'fallback' => 'fr', 'supported' => ['en', 'fr'], 'detection' => ['route', 'cookie', 'header']],
     ], JSON_THROW_ON_ERROR));
     file_put_contents($root . '/.env', "APP_DEBUG=true\nDATABASE_USER=demo\n");
     $config = ApplicationConfig::load($root);
@@ -98,9 +127,39 @@ $test('phpaml.json et .env génèrent la configuration runtime', function () use
     $expect($config['rate_limit']['limit'] === 25 && $config['database']['username'] === 'demo', 'Les réglages déclaratifs doivent être normalisés.');
     $expect($config['api']['tokens']['storage_path'] === $root . '/runtime/storage/tokens.json', 'La configuration API doit être normalisée.');
     $expect($config['data']['connections']['main']['database'] === $root . '/runtime/storage/data.sqlite', 'La configuration Data doit être normalisée.');
+    $expect($config['i18n']['directory'] === $root . '/src/locales' && $config['i18n']['supported'] === ['en', 'fr'], 'La configuration i18n doit être normalisée.');
     $expect(is_file($root . '/runtime/config/app.php'), 'Le cache runtime/config/app.php doit être généré.');
     unlink($root . '/runtime/config/app.php'); rmdir($root . '/runtime/config'); rmdir($root . '/runtime');
     unlink($root . '/.env'); unlink($root . '/phpaml.json'); rmdir($root . '/app/views'); rmdir($root . '/app'); rmdir($root);
+});
+
+$test('le chargement de deux environnements ne conserve aucune valeur du projet précédent', function () use ($expect): void {
+    $root = sys_get_temp_dir() . '/phpaml-env-isolation-' . bin2hex(random_bytes(6));
+    mkdir($root, 0700, true);
+    file_put_contents($root . '/first.env', "PHPAML_ISOLATED_VALUE=first\n");
+    file_put_contents($root . '/second.env', "OTHER_VALUE=second\n");
+    Env::load($root . '/first.env');
+    $expect(Env::get('PHPAML_ISOLATED_VALUE') === 'first', 'Le premier environnement doit être chargé.');
+    Env::load($root . '/second.env');
+    $expect(Env::get('PHPAML_ISOLATED_VALUE') === null, 'Une valeur absente du nouveau projet ne doit pas survivre.');
+    $expect(Env::get('OTHER_VALUE') === 'second', 'Le second environnement doit être chargé.');
+    Env::load($root . '/missing.env');
+    $expect(Env::get('OTHER_VALUE') === null, 'Un projet sans .env doit repartir avec un état vide.');
+    unlink($root . '/first.env');
+    unlink($root . '/second.env');
+    rmdir($root);
+});
+
+$test("la lecture locale d'un environnement ne modifie pas l'état global historique", function () use ($expect): void {
+    $root = sys_get_temp_dir() . '/phpaml-env-snapshot-' . bin2hex(random_bytes(6));
+    mkdir($root, 0700, true);
+    file_put_contents($root . '/global.env', "SCOPE_VALUE=global\n");
+    file_put_contents($root . '/local.env', "SCOPE_VALUE=local\nLOCAL_ONLY=yes\n");
+    Env::load($root . '/global.env');
+    $snapshot = Env::read($root . '/local.env');
+    $expect($snapshot['SCOPE_VALUE'] === 'local' && $snapshot['LOCAL_ONLY'] === 'yes', 'La lecture locale doit retourner son propre instantané.');
+    $expect(Env::get('SCOPE_VALUE') === 'global' && Env::get('LOCAL_ONLY') === null, "La lecture locale ne doit pas remplacer l'état de compatibilité global.");
+    unlink($root . '/global.env'); unlink($root . '/local.env'); rmdir($root);
 });
 
 $test('une classe Route déclare une ressource API avec un préfixe', function () use ($expect): void {
@@ -144,11 +203,136 @@ $test('les paquets optionnels sont composés par un bootstrapper applicatif', fu
     $expect($application->container()->get('optional.service') === $service, 'Le bootstrapper doit pouvoir enregistrer un service.');
 });
 
+$test('les services scoped sont isolés et nettoyés après chaque requête', function () use ($expect, $throws): void {
+    $application = new WebApplication([]);
+    $container = $application->container();
+    $container->scoped('request.service', static fn (): object => new stdClass());
+    $instances = [];
+
+    foreach (['/first', '/second'] as $path) {
+        $request = new Request('GET', $path);
+        $application->handle($request, static function (Request $active) use ($container, &$instances, $expect, $request): Response {
+            $first = $container->get('request.service');
+            $second = $container->get('request.service');
+            $expect($first === $second, 'Un service scoped doit être stable pendant une requête.');
+            $expect($container->get(Request::class) === $request, 'La requête active doit être injectable dans sa propre portée.');
+            $expect($active === $request, 'La destination doit recevoir la même requête que le conteneur.');
+            $instances[] = $first;
+            return Response::html('ok');
+        });
+        $expect(!$container->hasActiveScope(), 'La portée doit être fermée après la réponse.');
+    }
+
+    $expect($instances[0] !== $instances[1], 'Deux requêtes ne doivent jamais partager un service scoped.');
+    $throws(fn (): object => $container->get('request.service'));
+    $throws(fn (): object => $container->get(Request::class));
+});
+
+$test('la session délègue son stockage et ferme celui-ci avec la portée', function () use ($expect): void {
+    $container = new Container();
+    $store = new MemorySessionStore();
+    $container->scoped(Session::class, static fn (): Session => new Session([], $store));
+    $container->beginScope();
+    $session = $container->get(Session::class);
+    $session->set('user', 42);
+    $expect($session->get('user') === 42, 'La session doit déléguer la lecture et l’écriture à son stockage.');
+    $container->endScope();
+    $expect($store->closeCount === 1, 'Le stockage de session doit être fermé exactement une fois avec la portée.');
+});
+
+$test('le stockage Redis conserve des champs atomiques et régénère son identifiant', function () use ($expect): void {
+    $redis = new MemoryRedisClient();
+    $first = new RedisSessionStore($redis, 'shared-session', 300);
+    $second = new RedisSessionStore($redis, 'shared-session', 300);
+    $first->set('profile', ['name' => 'Ada']);
+    $second->set('flash', 'saved');
+    $expect($first->get('flash') === 'saved' && $second->get('profile') === ['name' => 'Ada'], 'Deux requêtes ne doivent pas écraser les champs Redis distincts.');
+    $previous = $first->id();
+    $first->regenerate();
+    $expect($first->id() !== $previous && $first->get('profile') === ['name' => 'Ada'], 'La rotation doit déplacer atomiquement les données vers le nouvel identifiant.');
+    $first->remove('flash');
+    $expect($first->get('flash') === null, 'La suppression Redis doit être immédiatement visible.');
+    $session = new Session([], $first);
+    $expect($session->id() === $first->id(), 'La session doit exposer l’identifiant de son stockage distribué.');
+});
+
+$test('une portée de requête est nettoyée même lorsque le traitement échoue', function () use ($expect): void {
+    $application = new WebApplication([]);
+    $response = $application->handle(
+        new Request('GET', '/failure'),
+        static function (): Response { throw new RuntimeException('failure'); },
+    );
+    $expect($response->status() === 500, 'Le middleware d’erreur doit convertir l’exception en réponse.');
+    $expect(!$application->container()->hasActiveScope(), 'Une réponse en erreur doit fermer la portée active.');
+});
+
+$test('les portées imbriquées restaurent le contexte extérieur', function () use ($expect): void {
+    $container = new Container();
+    $container->scoped('nested.service', static fn (): object => new stdClass());
+
+    $container->beginScope();
+    try {
+        $outer = $container->get('nested.service');
+        $container->beginScope();
+        try {
+            $inner = $container->get('nested.service');
+            $expect($inner !== $outer, 'Une portée imbriquée doit isoler ses propres services.');
+        } finally {
+            $container->endScope();
+        }
+        $expect($container->get('nested.service') === $outer, 'Fermer la portée imbriquée doit restaurer le service extérieur.');
+    } finally {
+        $container->endScope();
+    }
+});
+
+$test('deux Fibers concurrentes ne partagent ni requête ni service scoped', function () use ($expect): void {
+    $container = new Container();
+    $container->scoped('fiber.service', static fn (): object => new stdClass());
+    $run = static function (string $path) use ($container): array {
+        $container->beginScope();
+        try {
+            $request = new Request('GET', $path);
+            $container->setScoped(Request::class, $request);
+            $service = $container->get('fiber.service');
+            Fiber::suspend([$container->get(Request::class)->path(), spl_object_id($service)]);
+            return [$container->get(Request::class)->path(), spl_object_id($container->get('fiber.service'))];
+        } finally {
+            $container->endScope();
+        }
+    };
+    $first = new Fiber(static fn (): array => $run('/first'));
+    $second = new Fiber(static fn (): array => $run('/second'));
+    $firstStart = $first->start();
+    $secondStart = $second->start();
+    $first->resume();
+    $second->resume();
+    $expect($firstStart[0] === '/first' && $secondStart[0] === '/second', 'Chaque Fiber doit conserver sa propre requête.');
+    $expect($firstStart[1] !== $secondStart[1], 'Chaque Fiber doit construire son propre service scoped.');
+    $expect($first->getReturn() === $firstStart && $second->getReturn() === $secondStart, 'Le contexte doit rester stable après entrelacement.');
+    $expect(!$container->hasActiveScope(), 'Les portées Fiber terminées doivent être entièrement libérées.');
+});
+
 $test('les parties statiques des routes sont échappées', function () use ($expect): void {
     $router = new Router(new Container());
     $router->add('GET', '/v1.0/{id}', [SecurityTestController::class, 'show']);
     $expect($router->dispatch(new Request('GET', '/v1.0/7'))->status() === 200, 'La route exacte doit correspondre.');
     $expect($router->dispatch(new Request('GET', '/v1X0/7'))->status() === 404, 'Le point statique ne doit pas agir comme une expression régulière.');
+});
+
+$test('l’index de routage conserve priorité, paramètres, noms et réponses 405', function () use ($expect): void {
+    $router = new Router(new Container());
+    $router->add('GET', '/users/{id}', [SecurityTestController::class, 'show'], name: 'users.show');
+    $router->add('POST', '/users/{id}', [SecurityTestController::class, 'show']);
+    $router->add('GET', '/{section}/{id}', [SecurityTestController::class, 'show']);
+    for ($index = 0; $index < 500; $index++) {
+        $router->add('GET', "/catalog/{$index}/{id}", [SecurityTestController::class, 'show']);
+    }
+    $matched = $router->dispatch(new Request('GET', '/catalog/499/73'));
+    $method = $router->dispatch(new Request('DELETE', '/users/42'));
+    $expect($matched->content() === '{"id":"73"}', 'L’index doit retrouver une route statique profonde avec paramètre.');
+    $expect($method->status() === 405 && ($method->headers()['Allow'] ?? '') === 'GET, POST', 'L’index doit conserver la détection des méthodes autorisées.');
+    $expect($router->url('users.show', ['id' => 'a/b']) === '/users/a%2Fb', 'L’index des noms doit conserver l’encodage des paramètres.');
 });
 
 $test('les définitions de route invalides sont refusées', function () use ($throws): void {
@@ -207,6 +391,38 @@ $test('la CSP autorise uniquement le nonce du moteur AML View', function () use 
     $expect(!str_contains($csp, 'nonce-injected-value'), "Le contenu HTML ne doit jamais déterminer la politique CSP.");
 });
 
+$test('la sécurité HTTPS dépend de la requête courante et non des variables globales', function () use ($expect): void {
+    $middleware = new SecurityHeadersMiddleware();
+    $next = static fn (): Response => Response::html('ok');
+    $secure = $middleware->process(new Request('GET', '/', [], [], ['HTTP_X_FORWARDED_PROTO' => 'https']), $next);
+    $plain = $middleware->process(new Request('GET', '/', [], [], ['HTTPS' => 'off']), $next);
+    $expect(isset($secure->headers()['Strict-Transport-Security']), 'Une requête HTTPS doit recevoir HSTS.');
+    $expect(!isset($plain->headers()['Strict-Transport-Security']), 'Une requête HTTP ne doit pas recevoir HSTS.');
+});
+
+$test('la langue est résolue par route, cookie, en-tête puis repli', function () use ($expect): void {
+    $active = [];
+    $middleware = new LocaleMiddleware(
+        ['en', 'fr-CA'],
+        'en',
+        ['route', 'cookie', 'header'],
+        'phpaml_locale',
+        static function (string $locale, Closure $next) use (&$active): Response {
+            $active[] = $locale;
+            return $next();
+        },
+    );
+    $next = static fn (Request $request): Response => Response::json(['locale' => $request->attribute('locale')]);
+    $route = $middleware->process(new Request('GET', '/fr/docs', [], [], ['HTTP_ACCEPT_LANGUAGE' => 'en'], ['phpaml_locale' => 'en']), $next);
+    $cookie = $middleware->process(new Request('GET', '/docs', [], [], ['HTTP_ACCEPT_LANGUAGE' => 'en'], ['phpaml_locale' => 'fr-CA']), $next);
+    $header = $middleware->process(new Request('GET', '/docs', [], [], ['HTTP_ACCEPT_LANGUAGE' => 'de;q=0.4, fr-FR;q=0.9, en;q=0.8']), $next);
+    $fallback = $middleware->process(new Request('GET', '/docs', [], [], ['HTTP_ACCEPT_LANGUAGE' => 'de']), $next);
+    $expect($active === ['fr-CA', 'fr-CA', 'fr-CA', 'en'], 'La priorité de détection des langues est incorrecte.');
+    $expect(($route->headers()['Content-Language'] ?? '') === 'fr-CA', 'La réponse doit annoncer sa langue.');
+    $expect(($route->headers()['Vary'] ?? '') === 'Accept-Language, Cookie', 'Les caches doivent varier selon les signaux de langue.');
+    $expect($header->content() === '{"locale":"fr-CA"}' && $fallback->content() === '{"locale":"en"}', 'La langue doit être injectée dans la requête.');
+});
+
 $test('les erreurs CSRF et Rate Limit conservent les en-têtes de sécurité', function () use ($expect): void {
     $rateDirectory = sys_get_temp_dir() . '/phpaml-pipeline-rate-' . bin2hex(random_bytes(6));
     $application = new WebApplication([
@@ -217,8 +433,13 @@ $test('les erreurs CSRF et Rate Limit conservent les en-têtes de sécurité', f
     $csrf = $application->handle(new Request('POST', '/save'), $destination);
     $expect($csrf->status() === 419 && isset($csrf->headers()['Content-Security-Policy']), 'La réponse 419 doit conserver les protections HTTP.');
 
-    $session = $application->container()->get(Session::class);
-    $server = ['HTTP_X_CSRF_TOKEN' => $session->token(), 'REMOTE_ADDR' => '127.0.0.1'];
+    $token = '';
+    $application->handle(new Request('GET', '/token'), static function () use ($application, &$token): Response {
+        $session = $application->container()->get(Session::class);
+        $token = $session->token();
+        return Response::html('ok');
+    });
+    $server = ['HTTP_X_CSRF_TOKEN' => $token, 'REMOTE_ADDR' => '127.0.0.1'];
     $application->handle(new Request('POST', '/save', [], [], $server), $destination);
     $limited = $application->handle(new Request('POST', '/save', [], [], $server), $destination);
     $expect($limited->status() === 429 && isset($limited->headers()['Content-Security-Policy']), 'La réponse 429 doit conserver les protections HTTP.');

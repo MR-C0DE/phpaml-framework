@@ -122,6 +122,17 @@ final class Request
             || str_contains($accept, 'application/json');
     }
 
+    public function isSecure(): bool
+    {
+        $https = strtolower((string) $this->server('HTTPS', ''));
+        if ($https !== '' && $https !== 'off' && $https !== '0') {
+            return true;
+        }
+
+        $forwardedProto = strtolower(trim(explode(',', (string) $this->header('X-Forwarded-Proto', ''))[0]));
+        return $forwardedProto === 'https';
+    }
+
     public function attribute(string $key, mixed $default = null): mixed
     {
         return $this->attributes[$key] ?? $default;

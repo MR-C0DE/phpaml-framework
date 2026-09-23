@@ -14,8 +14,17 @@ use RuntimeException;
 final class Router
 {
     private const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
-    /** @var list<array{method: string, path: string, pattern: string, handler: array{0: class-string, 1: string}, middleware: list<class-string>, abilities: list<string>, name: ?string}> */
+    /** @var list<array{method: string, path: string, prefix: string, pattern: string, handler: array{0: class-string, 1: string}, middleware: list<class-string>, abilities: list<string>, name: ?string}> */
     private array $routes = [];
+
+    /** @var array<string, array<string, list<int>>> */
+    private array $routeIndex = [];
+
+    /** @var array<string, list<int>> */
+    private array $pathIndex = [];
+
+    /** @var array<string, int> */
+    private array $nameIndex = [];
 
     public function __construct(private Container $container)
     {
@@ -36,7 +45,7 @@ final class Router
                 throw new RuntimeException("Middleware de route invalide : '{$class}'.");
             }
         }
-        if ($name !== null && (!preg_match('/^[A-Za-z][A-Za-z0-9_.-]*$/', $name) || array_filter($this->routes, static fn(array $route): bool => $route['name'] === $name))) {
+        if ($name !== null && (!preg_match('/^[A-Za-z][A-Za-z0-9_.-]*$/', $name) || isset($this->nameIndex[$name]))) {
             throw new RuntimeException("Nom de route invalide ou déjà utilisé : '{$name}'.");
         }
         $path = '/' . trim($path, '/');
@@ -51,15 +60,23 @@ final class Router
                 ? '(?P<' . $match[1] . '>[^/]+)'
                 : preg_quote($part, '#');
         }
+        $staticPrefix = $this->staticPrefix($path);
+        $routeIndex = count($this->routes);
         $this->routes[] = [
             'method' => $method,
             'path' => $path,
+            'prefix' => $staticPrefix,
             'pattern' => '#^' . $pattern . '$#',
             'handler' => $handler,
             'middleware' => $middleware,
             'abilities' => array_values(array_filter($abilities, 'is_string')),
             'name' => $name,
         ];
+        $this->routeIndex[$method][$staticPrefix][] = $routeIndex;
+        $this->pathIndex[$staticPrefix][] = $routeIndex;
+        if ($name !== null) {
+            $this->nameIndex[$name] = $routeIndex;
+        }
     }
 
     /** @param array{0: class-string, 1: string} $handler */
@@ -116,13 +133,9 @@ final class Router
 
     public function dispatch(Request $request): Response
     {
-        $allowedMethods = [];
-        foreach ($this->routes as $route) {
+        foreach ($this->candidateIndexes($request->path(), $request->method()) as $index) {
+            $route = $this->routes[$index];
             if (!preg_match($route['pattern'], $request->path(), $matches)) {
-                continue;
-            }
-            if ($route['method'] !== $request->method()) {
-                $allowedMethods[] = $route['method'];
                 continue;
             }
             foreach ($matches as $key => $value) {
@@ -155,6 +168,13 @@ final class Router
             }, $route['middleware']);
             return (new MiddlewarePipeline($middlewares))->handle($request, $destination);
         }
+        $allowedMethods = [];
+        foreach ($this->candidateIndexes($request->path()) as $index) {
+            $route = $this->routes[$index];
+            if ($route['method'] !== $request->method() && preg_match($route['pattern'], $request->path()) === 1) {
+                $allowedMethods[] = $route['method'];
+            }
+        }
         if ($allowedMethods !== []) {
             return Response::html('<h1>405</h1><p>Méthode non autorisée.</p>', 405)
                 ->withHeader('Allow', implode(', ', array_unique($allowedMethods)));
@@ -171,10 +191,9 @@ final class Router
     /** @param array<string, string|int> $parameters */
     public function url(string $name, array $parameters = []): string
     {
-        foreach ($this->routes as $route) {
-            if ($route['name'] !== $name) {
-                continue;
-            }
+        $index = $this->nameIndex[$name] ?? null;
+        if ($index !== null) {
+            $route = $this->routes[$index];
             return preg_replace_callback('/\{([^}]+)\}/', static function (array $match) use ($parameters): string {
                 if (!array_key_exists($match[1], $parameters)) {
                     throw new RuntimeException("Paramètre de route manquant : '{$match[1]}'.");
@@ -183,5 +202,44 @@ final class Router
             }, $route['path']);
         }
         throw new RuntimeException("Route nommée introuvable : '{$name}'.");
+    }
+
+    private function staticPrefix(string $path): string
+    {
+        if ($path === '/') {
+            return '/';
+        }
+        $prefix = [];
+        foreach (explode('/', trim($path, '/')) as $segment) {
+            if (str_contains($segment, '{')) {
+                break;
+            }
+            $prefix[] = $segment;
+        }
+        return $prefix === [] ? '/' : '/' . implode('/', $prefix);
+    }
+
+    /** @return list<int> */
+    private function candidateIndexes(string $path, ?string $method = null): array
+    {
+        $prefixes = ['/'];
+        $current = '';
+        foreach (explode('/', trim($path, '/')) as $segment) {
+            if ($segment === '') continue;
+            $current .= '/' . $segment;
+            $prefixes[] = $current;
+        }
+        $candidates = [];
+        foreach ($prefixes as $prefix) {
+            $indexes = $method === null
+                ? ($this->pathIndex[$prefix] ?? [])
+                : ($this->routeIndex[$method][$prefix] ?? []);
+            foreach ($indexes as $index) {
+                $candidates[$index] = true;
+            }
+        }
+        $indexes = array_keys($candidates);
+        sort($indexes, SORT_NUMERIC);
+        return $indexes;
     }
 }
