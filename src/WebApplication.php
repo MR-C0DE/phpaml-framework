@@ -23,7 +23,6 @@ use PHPAML\Api\TokenManager;
 use PHPAML\Api\AuthManager;
 use PHPAML\Middleware\ApiMiddleware;
 use PHPAML\Middleware\RequestIdMiddleware;
-use PHPAML\Middleware\LocaleMiddleware;
 
 final class WebApplication
 {
@@ -127,26 +126,6 @@ final class WebApplication
             $middlewares[] = new ApiMiddleware($api, $tokens instanceof TokenManager ? $tokens : null);
         }
         $middlewares[] = new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger);
-        $i18n = is_array($config['i18n'] ?? null) ? $config['i18n'] : [];
-        if (($i18n['enabled'] ?? false) === true
-            && class_exists(\AML\I18n\I18n::class)
-            && class_exists(\AML\I18n\Translator::class)) {
-            \AML\I18n\I18n::configure(
-                (string) ($i18n['directory'] ?? ''),
-                (string) ($i18n['default'] ?? 'en'),
-                (string) ($i18n['fallback'] ?? 'en'),
-            );
-            $middlewares[] = new LocaleMiddleware(
-                is_array($i18n['supported'] ?? null) ? $i18n['supported'] : ['en'],
-                (string) ($i18n['fallback'] ?? 'en'),
-                is_array($i18n['detection'] ?? null) ? $i18n['detection'] : ['route', 'cookie', 'header'],
-                (string) ($i18n['cookie'] ?? 'phpaml_locale'),
-                static fn (string $locale, Closure $next): Response => \AML\I18n\I18n::within(
-                    \AML\I18n\I18n::translator()->withLocale($locale),
-                    $next,
-                ),
-            );
-        }
         $rateLimit = $config['rate_limit'] ?? [];
         if (is_array($rateLimit) && ($rateLimit['enabled'] ?? false)) {
             $middlewares[] = new RateLimitMiddleware(
