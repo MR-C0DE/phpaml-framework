@@ -41,6 +41,7 @@ final class View
         }
 
         ob_start();
+        $view = $this;
         extract($data, EXTR_SKIP);
         include $viewPath;
         return Response::html((string) ob_get_clean(), $status);
@@ -64,6 +65,7 @@ final class View
         }
 
         extract($data, EXTR_SKIP);
+        $view = $this;
         include $partialPath;
     }
 }
