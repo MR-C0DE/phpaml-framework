@@ -112,7 +112,7 @@ $throws = static function (Closure $case) use ($expect): void { try { $case(); }
 
 $test('phpaml.json et .env génèrent la configuration runtime', function () use ($expect): void {
     $root = sys_get_temp_dir() . '/phpaml-config-' . bin2hex(random_bytes(6));
-    mkdir($root . '/app/views', 0755, true);
+    mkdir($root . '/src/views', 0755, true);
     file_put_contents($root . '/phpaml.json', json_encode([
         'name' => 'configuration-test',
         'application' => ['type' => 'classic', 'debug' => false, 'rate_limit' => ['limit' => 25]],
@@ -130,7 +130,7 @@ $test('phpaml.json et .env génèrent la configuration runtime', function () use
     $expect($config['i18n']['directory'] === $root . '/src/locales' && $config['i18n']['supported'] === ['en', 'fr'], 'La configuration i18n doit être normalisée.');
     $expect(is_file($root . '/runtime/config/app.php'), 'Le cache runtime/config/app.php doit être généré.');
     unlink($root . '/runtime/config/app.php'); rmdir($root . '/runtime/config'); rmdir($root . '/runtime');
-    unlink($root . '/.env'); unlink($root . '/phpaml.json'); rmdir($root . '/app/views'); rmdir($root . '/app'); rmdir($root);
+    unlink($root . '/.env'); unlink($root . '/phpaml.json'); rmdir($root . '/src/views'); rmdir($root . '/src'); rmdir($root);
 });
 
 $test('le chargement de deux environnements ne conserve aucune valeur du projet précédent', function () use ($expect): void {

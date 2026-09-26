@@ -53,7 +53,7 @@ final class ApplicationConfig
         $session = is_array($application['session'] ?? null) ? $application['session'] : [];
         $rateLimit = is_array($application['rate_limit'] ?? null) ? $application['rate_limit'] : [];
         $type = (string) ($application['type'] ?? $manifest['type'] ?? 'classic');
-        $views = (string) ($application['views'] ?? 'app/views');
+        $views = (string) ($application['views'] ?? 'src/views');
         $middlewares = is_array($application['middlewares'] ?? null)
             ? array_values(array_filter($application['middlewares'], 'is_string'))
             : [SecurityHeadersMiddleware::class];

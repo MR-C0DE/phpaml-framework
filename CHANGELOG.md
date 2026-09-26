@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-beta.5 — 2026-09-26
+
+- adopte `src/views` comme emplacement par défaut des vues applicatives ;
+- découvre en priorité les routes dans `src/routes` tout en conservant
+  `routes/` comme compatibilité pour les anciens projets ;
+- ajoute les non-régressions de configuration et de découverte associées à la
+  structure unifiée.
+
 ## 0.3.0-beta.4 — 2026-09-12
 
 - isole les réponses idempotentes par propriétaire authentifié et refuse tout

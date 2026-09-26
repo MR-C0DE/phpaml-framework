@@ -98,7 +98,9 @@ final class WebApplication
         $this->container->set(Router::class, $this->router);
         $this->router->addRoutes($config['routes'] ?? []);
         $projectRoot = isset($config['project_root']) ? (string) $config['project_root'] : '';
-        foreach ([$projectRoot . '/routes', $projectRoot . '/src/routes'] as $applicationRoutes) {
+        // New projects keep all application code under src/. The historical
+        // root routes/ directory remains a read-only compatibility fallback.
+        foreach ([$projectRoot . '/src/routes', $projectRoot . '/routes'] as $applicationRoutes) {
             if ($projectRoot !== '' && is_dir($applicationRoutes)) {
                 $this->router->addRoutes(Route::discover($applicationRoutes));
             }
