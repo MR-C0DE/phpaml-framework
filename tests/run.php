@@ -6,10 +6,12 @@ require dirname(__DIR__) . '/src/Autoloader.php';
 PHPAML\Autoloader::register(['PHPAML\\' => dirname(__DIR__) . '/src']);
 
 use PHPAML\Container;
+use PHPAML\Console;
 use PHPAML\Config\ApplicationConfig;
 use PHPAML\Config\Env;
 use PHPAML\Http\Request;
 use PHPAML\Http\Response;
+use PHPAML\Http\ErrorPageRenderer;
 use PHPAML\Middleware\MiddlewareInterface;
 use PHPAML\Routing\Router;
 use PHPAML\Routing\Route;
@@ -20,6 +22,8 @@ use PHPAML\Logging\Logger;
 use PHPAML\Middleware\RateLimitMiddleware;
 use PHPAML\Middleware\CsrfMiddleware;
 use PHPAML\Middleware\SecurityHeadersMiddleware;
+use PHPAML\Middleware\ErrorHandlerMiddleware;
+use PHPAML\Middleware\ConsoleOutputMiddleware;
 use PHPAML\Middleware\LocaleMiddleware;
 use PHPAML\Security\CspNonce;
 use PHPAML\Session\Session;
@@ -46,6 +50,42 @@ use PHPAML\Api\AuthController;
 use PHPAML\Api\AuthException;
 use PHPAML\Middleware\AbilityMiddleware;
 use PHPAML\Middleware\RedisRateLimitMiddleware;
+
+if (($argv[1] ?? '') === 'console-worker') {
+    Console::log("Utilisateur\n\033[2Jligne", ['id' => 42, 'active' => true, 'password' => 'private-value']);
+    exit(0);
+}
+
+if (($argv[1] ?? '') === 'console-hostile-worker') {
+    $recursive = [];
+    $recursive['self'] = &$recursive;
+    $throwing = new class implements Stringable {
+        public function __toString(): string { throw new RuntimeException('string conversion failure'); }
+    };
+    Console::log("invalid-utf8:\xC3\x28", "controls:\0\033[2J\rforged\nline", [
+        'nested' => ['authorization' => 'Bearer private', 'cookie' => 'session=private'],
+    ]);
+    Console::log($recursive, $throwing);
+    exit(0);
+}
+
+if (($argv[1] ?? '') === 'console-large-worker') {
+    Console::log(str_repeat('A', 2 * 1024 * 1024));
+    Console::log(str_repeat("line\n", 2000));
+    exit(0);
+}
+
+if (($argv[1] ?? '') === 'echo-worker') {
+    $response = (new ConsoleOutputMiddleware())->process(
+        new Request('GET', '/echo'),
+        static function (): Response {
+            echo "Valeur calculée : 42\n";
+            return Response::html('response-body');
+        },
+    );
+    fwrite(STDOUT, $response->content());
+    exit(0);
+}
 
 if (($argv[1] ?? '') === 'token-worker') {
     $manager = new TokenManager((string) ($argv[2] ?? ''), 300);
@@ -388,6 +428,8 @@ $test('la CSP autorise uniquement le nonce du moteur AML View', function () use 
     );
     $csp = $response->headers()['Content-Security-Policy'] ?? '';
     $expect(is_string($capturedNonce) && str_contains($csp, "script-src 'self' 'nonce-{$capturedNonce}'"), 'La CSP doit utiliser le nonce immuable de la requête.');
+    $expect(str_contains($csp, "style-src 'self' 'unsafe-inline'"), 'La CSP doit autoriser les modificateurs de style AML View.');
+    $expect(!str_contains($csp, "script-src 'self' 'unsafe-inline'"), 'La CSP ne doit jamais autoriser les scripts inline sans nonce.');
     $expect(!str_contains($csp, 'nonce-injected-value'), "Le contenu HTML ne doit jamais déterminer la politique CSP.");
 });
 
@@ -639,6 +681,122 @@ $test('le journal structuré masque les secrets imbriqués', function () use ($e
     $expect(!str_contains($content, 'secret-value') && !str_contains($content, 'private-token'), 'Les secrets doivent être masqués.');
 });
 
+$test('Console écrit dans le terminal sans polluer la sortie HTTP', function () use ($expect): void {
+    $pipes = [];
+    $process = proc_open(
+        [PHP_BINARY, __FILE__, 'console-worker'],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        dirname(__DIR__),
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('Impossible de lancer le test Console.');
+    }
+    $standardOutput = stream_get_contents($pipes[1]);
+    $terminalOutput = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    $expect($exitCode === 0, 'Le processus Console doit réussir.');
+    $expect($standardOutput === '', 'Console ne doit jamais écrire dans la réponse standard.');
+    $expect(
+        str_contains($terminalOutput, '[PHPAML] [LOG] Utilisateur')
+        && str_contains($terminalOutput, '"id": 42'),
+        'Console doit afficher les valeurs structurées dans le terminal.',
+    );
+    $expect(!str_contains($terminalOutput, "\033"), 'Console doit neutraliser les séquences de contrôle du terminal.');
+    $expect(
+        !str_contains($terminalOutput, 'private-value') && str_contains($terminalOutput, '[REDACTED]'),
+        'Console doit masquer les clés sensibles des valeurs structurées.',
+    );
+    $expect(
+        str_contains($terminalOutput, "[PHPAML] [LOG] �[2Jligne"),
+        'Chaque ligne doit rester préfixée afin d’éviter la falsification des journaux.',
+    );
+});
+
+$test('echo est redirigé vers le terminal pendant une requête HTTP', function () use ($expect): void {
+    $pipes = [];
+    $process = proc_open(
+        [PHP_BINARY, __FILE__, 'echo-worker'],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        dirname(__DIR__),
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('Impossible de lancer le test echo.');
+    }
+    $standardOutput = stream_get_contents($pipes[1]);
+    $terminalOutput = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    $expect($exitCode === 0, 'Le processus echo doit réussir.');
+    $expect($standardOutput === 'response-body', 'echo ne doit pas contaminer la réponse HTTP.');
+    $expect(
+        str_contains($terminalOutput, '[PHPAML] [ECHO] Valeur calculée : 42'),
+        'Le contenu de echo doit apparaître dans le terminal.',
+    );
+});
+
+$test('Console résiste aux entrées terminal hostiles et aux objets défaillants', function () use ($expect): void {
+    $errorFile = tempnam(sys_get_temp_dir(), 'phpaml-console-hostile-');
+    if ($errorFile === false) throw new RuntimeException('Impossible de créer le fichier Console hostile.');
+    $pipes = [];
+    $process = proc_open(
+        [PHP_BINARY, __FILE__, 'console-hostile-worker'],
+        [1 => ['pipe', 'w'], 2 => ['file', $errorFile, 'w']],
+        $pipes,
+        dirname(__DIR__),
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) throw new RuntimeException('Impossible de lancer le worker Console hostile.');
+    $standardOutput = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $exitCode = proc_close($process);
+    $terminalOutput = (string) file_get_contents($errorFile);
+    unlink($errorFile);
+
+    $expect($exitCode === 0 && $standardOutput === '', 'Une valeur hostile ne doit ni faire tomber le processus ni polluer STDOUT.');
+    $expect(preg_match('//u', $terminalOutput) === 1, 'La sortie terminal doit toujours être un UTF-8 valide.');
+    $expect(!str_contains($terminalOutput, "\033") && !str_contains($terminalOutput, "\0"), 'Les caractères de contrôle doivent être neutralisés.');
+    $expect(!str_contains($terminalOutput, 'Bearer private') && !str_contains($terminalOutput, 'session=private'), 'Les secrets imbriqués doivent être masqués.');
+    $expect(str_contains($terminalOutput, '[unprintable array]'), 'Une structure récursive doit être bornée sans exception.');
+    $expect(str_contains($terminalOutput, '[unprintable Stringable@anonymous'), 'Un Stringable défaillant doit être signalé sans exception.');
+});
+
+$test('Console borne une sortie démesurée', function () use ($expect): void {
+    $errorFile = tempnam(sys_get_temp_dir(), 'phpaml-console-large-');
+    if ($errorFile === false) throw new RuntimeException('Impossible de créer le fichier Console volumineux.');
+    $pipes = [];
+    $process = proc_open(
+        [PHP_BINARY, __FILE__, 'console-large-worker'],
+        [1 => ['pipe', 'w'], 2 => ['file', $errorFile, 'w']],
+        $pipes,
+        dirname(__DIR__),
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) throw new RuntimeException('Impossible de lancer le worker Console volumineux.');
+    stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $exitCode = proc_close($process);
+    $terminalOutput = (string) file_get_contents($errorFile);
+    unlink($errorFile);
+
+    $expect($exitCode === 0, 'La limitation de sortie ne doit pas faire échouer le processus.');
+    $expect(strlen($terminalOutput) < 1100000, 'La sortie terminal doit rester sous la limite de sécurité.');
+    $expect(str_contains($terminalOutput, '[truncated]'), 'Une sortie tronquée doit être clairement signalée.');
+    $expect(str_contains($terminalOutput, '[lines truncated]'), 'Un excès de lignes doit être clairement tronqué.');
+});
+
 $test('les migrations sont ordonnées et peuvent être annulées', function () use ($expect): void {
     $directory = sys_get_temp_dir() . '/phpaml-migrations-' . bin2hex(random_bytes(6));
     mkdir($directory, 0755, true);
@@ -799,6 +957,68 @@ $test('OpenAPI génère un client TypeScript utilisable', function () use ($expe
     $client = (new TypeScriptClientGenerator())->generate($openApi);
     $expect(isset($openApi['paths']['/api/v1/products/{id}']['get']), 'La route doit apparaître dans OpenAPI.');
     $expect(str_contains($client, 'productsShow(id: string | number)') && str_contains($client, 'Authorization'), 'Le client doit typer les chemins et gérer Bearer.');
+});
+
+$test('les pages d’erreur HTML sont personnalisables sans modifier les erreurs JSON', function () use ($expect): void {
+    $directory = sys_get_temp_dir() . '/phpaml-error-views-' . bin2hex(random_bytes(4));
+    mkdir($directory, 0750, true);
+    file_put_contents($directory . '/404.php', '<h1>Custom <?= $status ?></h1><p><?= htmlspecialchars($message, ENT_QUOTES, "UTF-8") ?></p>');
+    $renderer = new ErrorPageRenderer($directory);
+    $middleware = new ErrorHandlerMiddleware(false, null, $renderer);
+
+    $html = $middleware->process(
+        new Request('GET', '/missing'),
+        static fn (): Response => Response::html('legacy', 404),
+    );
+    $expect($html->status() === 404 && str_contains($html->content(), 'Custom 404'), 'La vue 404 personnalisée doit remplacer la réponse HTML générique.');
+
+    $json = $middleware->process(
+        new Request('GET', '/api/missing'),
+        static fn (): Response => Response::json(['error' => ['code' => 'NOT_FOUND']], 404),
+    );
+    $expect(str_contains($json->content(), 'NOT_FOUND'), 'Une erreur JSON existante ne doit pas être remplacée par une page HTML.');
+    @unlink($directory . '/404.php');
+    @rmdir($directory);
+});
+
+$test('les pages d’erreur personnalisées conservent les en-têtes de la réponse originale', function () use ($expect): void {
+    $directory = sys_get_temp_dir() . '/phpaml-error-headers-' . bin2hex(random_bytes(4));
+    mkdir($directory, 0750, true);
+    file_put_contents($directory . '/405.php', '<h1><?= $status ?></h1>');
+
+    $middleware = new ErrorHandlerMiddleware(false, null, new ErrorPageRenderer($directory));
+    $response = $middleware->process(
+        new Request('POST', '/resource'),
+        static fn (): Response => Response::html('Method Not Allowed', 405, ['Allow' => 'GET']),
+    );
+
+    $expect($response->status() === 405, 'Le statut 405 doit être conservé.');
+    $expect(($response->headers()['Allow'] ?? null) === 'GET', 'L’en-tête Allow doit être conservé.');
+    $expect(str_contains($response->content(), '<h1>405</h1>'), 'La page 405 personnalisée doit être rendue.');
+
+    @unlink($directory . '/405.php');
+    @rmdir($directory);
+});
+
+$test('les erreurs 500 masquent les détails en production et les exposent en développement', function () use ($expect): void {
+    $log = tempnam(sys_get_temp_dir(), 'phpaml-error-log-');
+    if ($log === false) { throw new RuntimeException('Impossible de créer le journal de test.'); }
+    $failure = static function (): Response { throw new RuntimeException('secret failure'); };
+
+    $production = (new ErrorHandlerMiddleware(false, new Logger($log), new ErrorPageRenderer()))
+        ->process(new Request('GET', '/failure'), $failure);
+    $expect($production->status() === 500, 'Une exception inattendue doit retourner 500.');
+    $expect(!str_contains($production->content(), 'secret failure'), 'La production ne doit pas divulguer le message interne.');
+    $expect(str_contains($production->content(), 'Reference:'), 'La production doit fournir une référence de diagnostic.');
+
+    $development = (new ErrorHandlerMiddleware(true, new Logger($log), new ErrorPageRenderer()))
+        ->process(new Request('GET', '/failure'), $failure);
+    $expect(str_contains($development->content(), 'secret failure'), 'Le mode debug doit afficher le message interne.');
+    $expect(str_contains($development->content(), 'RuntimeException'), 'Le mode debug doit identifier la classe de l’exception.');
+
+    $records = file_get_contents($log);
+    $expect(is_string($records) && str_contains($records, '"file"') && str_contains($records, '"line"'), 'Le journal doit contenir le fichier et la ligne.');
+    @unlink($log);
 });
 
 $failed = 0;

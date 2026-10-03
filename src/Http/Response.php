@@ -75,6 +75,9 @@ final class Response
 
     public function send(): void
     {
+        if (function_exists('header_remove')) {
+            header_remove('X-Powered-By');
+        }
         http_response_code($this->status);
         foreach ($this->headers as $name => $value) {
             header("{$name}: {$value}");

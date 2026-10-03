@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0-beta.6 — 2026-10-03
+
+- ajoute `PHPAML\Console` pour afficher des valeurs structurées dans le terminal
+  de développement sans contaminer les réponses HTTP ;
+- redirige les `echo` applicatifs vers `aml serve`, avec masquage des secrets,
+  neutralisation des caractères de contrôle et limites anti-inondation ;
+- ajoute des pages d’erreur HTML personnalisables, des références de diagnostic
+  en production et des détails complets uniquement en mode debug ;
+- conserve les en-têtes HTTP des erreurs, retire `X-Powered-By` et renforce la
+  couverture de sécurité des sorties hostiles ;
+- autorise les attributs de style nécessaires aux modificateurs AML View tout en
+  maintenant les scripts inline sous nonce CSP.
+
 ## 0.3.0-beta.5 — 2026-09-26
 
 - adopte `src/views` comme emplacement par défaut des vues applicatives ;

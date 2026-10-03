@@ -44,6 +44,48 @@ valeur est enregistrée dans un champ Redis distinct : deux requêtes modifiant
 des clés différentes ne réécrivent donc jamais toute la session. L’adaptateur
 accepte `ext-redis` ou un client compatible avec les opérations de hash Redis.
 
+## Console de développement
+
+`PHPAML\Console` affiche des informations dans le terminal où `aml serve` est
+en cours d’exécution, sans ajouter ces informations à la réponse HTTP :
+
+```php
+use PHPAML\Console;
+
+Console::log('Utilisateur chargé', ['id' => 42]);
+Console::info('Synchronisation terminée');
+Console::warning('Cache bientôt expiré');
+Console::error('Paiement refusé', $exception);
+```
+
+Les tableaux et objets sont affichés en JSON lisible. Dans une application AML
+View, `PHPAML\Console` vise le terminal serveur, tandis que
+`AML\View\Console` crée une instruction destinée à la console du navigateur.
+Un alias permet d’utiliser les deux dans le même fichier :
+
+```php
+use PHPAML\Console as ServerConsole;
+use AML\View\Console as BrowserConsole;
+```
+
+Pendant `aml serve`, un `echo` exécuté par le code applicatif est également
+redirigé vers ce terminal. PHPAML le capture afin qu’il ne corrompe jamais le
+HTML ou le JSON de la réponse :
+
+```php
+echo "Commande reçue\n";
+// Terminal : [PHPAML] [ECHO] Commande reçue
+```
+
+Dans un projet Console exécuté avec `aml run`, `echo` conserve naturellement
+le comportement standard de PHP.
+
+La console de développement n’est pas un stockage sécurisé : n’y affichez
+jamais de mot de passe, jeton d’accès, cookie, clé privée ou donnée personnelle.
+PHPAML masque les clés sensibles courantes dans les tableaux et neutralise les
+séquences de contrôle du terminal, mais les autres valeurs restent visibles par
+toute personne ayant accès au terminal du serveur.
+
 ## Vérification
 
 Le moteur nécessite PHP 8.2 ou une version ultérieure avec PDO. Pour exécuter

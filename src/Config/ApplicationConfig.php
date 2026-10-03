@@ -73,6 +73,7 @@ final class ApplicationConfig
                 'same_site' => (string) ($session['same_site'] ?? 'Lax'),
             ],
             'log_path' => self::absolute($projectRoot, (string) ($application['log'] ?? 'runtime/storage/logs/application.log')),
+            'error_views_path' => self::absolute($projectRoot, (string) ($application['error_views'] ?? 'src/views/errors')),
             'rate_limit' => [
                 'enabled' => (bool) ($rateLimit['enabled'] ?? true),
                 'storage_path' => self::absolute($projectRoot, (string) ($rateLimit['storage'] ?? 'runtime/storage/rate-limits')),

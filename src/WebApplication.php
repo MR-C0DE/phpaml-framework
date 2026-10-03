@@ -8,6 +8,8 @@ use Closure;
 use PHPAML\Http\Request;
 use PHPAML\Http\Response;
 use PHPAML\Middleware\ErrorHandlerMiddleware;
+use PHPAML\Middleware\ConsoleOutputMiddleware;
+use PHPAML\Http\ErrorPageRenderer;
 use PHPAML\Middleware\MiddlewareInterface;
 use PHPAML\Middleware\MiddlewarePipeline;
 use PHPAML\Middleware\CsrfMiddleware;
@@ -128,7 +130,17 @@ final class WebApplication
             $tokens = $this->container->get(TokenManager::class);
             $middlewares[] = new ApiMiddleware($api, $tokens instanceof TokenManager ? $tokens : null);
         }
-        $middlewares[] = new ErrorHandlerMiddleware((bool) ($config['debug'] ?? false), $logger);
+        $errorViewsPath = isset($config['error_views_path']) && is_string($config['error_views_path'])
+            ? $config['error_views_path']
+            : null;
+        $middlewares[] = new ErrorHandlerMiddleware(
+            (bool) ($config['debug'] ?? false),
+            $logger,
+            new ErrorPageRenderer($errorViewsPath),
+        );
+        if (PHP_SAPI === 'cli-server') {
+            $middlewares[] = new ConsoleOutputMiddleware();
+        }
         $rateLimit = $config['rate_limit'] ?? [];
         if (is_array($rateLimit) && ($rateLimit['enabled'] ?? false)) {
             $middlewares[] = new RateLimitMiddleware(
